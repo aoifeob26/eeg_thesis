@@ -868,10 +868,52 @@ explore smoothing parameters
 
 
 ```{r}
+
+fp1_pca <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr::select(name, time, sensor.value)
+pca_fd_matrix <- matrix(as.numeric(fp1_pca$sensor.value), 
+                       nrow = 256, ncol = 48)
+
 pca_fd <- smooth.basis(time, pca_fd_matrix, fdParObj)$fd
 res=pca.fd(pca_fd, nharm = 5)
 
 plot(res)
+
+
+
+time <- seq(0, 1, length.out = 256)
+
+
+norder <- 4
+nbasis <- length(time) + norder - 2  
+basis <- create.bspline.basis(range(time), nbasis, norder, time)
+
+
+Lfdobj <- 2
+lambda <- 1e-2  
+fdParObj <- fdPar(fd(matrix(0, nbasis, 1), basis), Lfdobj, lambda)
+
+
+s1_fd <- smooth.basis(time, s1_fd_matrix, fdParObj)$fd
+s2_match_fd <- smooth.basis(time, s2_match_fd_matrix, fdParObj)$fd
+s2_nomatch_fd <- smooth.basis(time, s2_nomatch_fd_matrix, fdParObj)$fd
+
+
+
+t_test_s1_s2match <- tperm.fd(s1_fd, s2_match_fd)
+t_test_s1_s2nomatch <- tperm.fd(s1_fd, s2_nomatch_fd)
+t_test_s2match_s2nomatch <- tperm.fd(s2_match_fd, s2_nomatch_fd)
+
+
+print("T-test between S1 and S2 Match:")
+print(t_test_s1_s2match)
+
+print("T-test between S1 and S2 No Match:")
+print(t_test_s1_s2nomatch)
+
+print("T-test between S2 Match and S2 No Match:")
+print(t_test_s2match_s2nomatch)
 
 
 ```
