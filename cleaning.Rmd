@@ -918,5 +918,162 @@ print(t_test_s2match_s2nomatch)
 
 ```
 
+
+
+
+```{r}
+
+set.seed(123)  
+library(caret)  # clustering functions kmeans etc
+train_indices <- createDataPartition(fp1modeldata$subject.identifier, p =0.75, list=F) #matching condition and subject identifier
+
+as.vector(train_indices)
+
+train_scores <- fp1modeldata[train_indices, ]
+test_scores <- fp1modeldata[-train_indices, ]
+train_condition <- train_scores$condition_factor
+test_condition <- test_scores$condition_factor
+
+
+
+train_scores_df <- data.frame(train_scores)
+test_scores_df <- data.frame(test_scores)
+
+
+train_model_fp1 <- multinom(train_condition ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 , data = train_scores_df)
+
+
+predictions <- predict(train_model_fp1, newdata = test_scores_df)
+
+
+confusion_matrix <- table(predictions, test_condition)
+print(confusion_matrix)
+
+accuracy <- sum(predictions == test_condition) / length(test_condition)
+print(accuracy)
+
+
 ```
-print(t_test_s2_s2nomatch)
+
+
+```{r}
+
+
+train_model_fp2 <- multinom(train_condition ~ FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5 , data = train_scores_df)
+
+
+predictions <- predict(train_model_fp2, newdata = test_scores_df)
+
+
+confusion_matrix <- table(predictions, test_condition)
+print(confusion_matrix)
+
+accuracy <- sum(predictions == test_condition) / length(test_condition)
+print(accuracy)
+```
+```{r}
+train_indices <- createDataPartition(fp1modeldata$subject.identifier, p =0.75, list=F) #matching condition and subject identifier
+
+as.vector(train_indices)
+
+train_scores <- fp1modeldata[train_indices, ]
+test_scores <- fp1modeldata[-train_indices, ]
+train_condition <- train_scores$condition_factor
+test_condition <- test_scores$condition_factor
+
+
+
+train_scores_df <- data.frame(train_scores)
+test_scores_df <- data.frame(test_scores)
+
+
+train_model_fp1 <- multinom(train_condition ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 , data = train_scores_df)
+
+
+predictions <- predict(train_model_fp1, newdata = test_scores_df)
+
+
+confusion_matrix <- table(predictions, test_condition)
+print(confusion_matrix)
+
+accuracy <- sum(predictions == test_condition) / length(test_condition)
+print(accuracy)
+
+```
+
+something going wrong accuracy really low. 
+
+
+```{r}
+set.seed(123)  
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr::select(name, subject.identifier, matching.condition, time, sensor.value) %>%
+  arrange(subject.identifier, matching.condition, name, time)
+
+fp2_data <- firsttrial %>%
+  filter(sensor.position == "FP2") %>%
+  dplyr::select(name, subject.identifier, matching.condition, time, sensor.value) %>%
+  arrange(subject.identifier, matching.condition, name, time)
+
+pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), nrow = 256, ncol = 48)
+pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), nrow = 256, ncol = 48)
+
+pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
+pca_fd_fp2 <- smooth.basis(time, pca_matrix_fp2, fdParObj)$fd
+
+res_fp1 <- pca.fd(pca_fd_fp1, nharm = 5)
+res_fp2 <- pca.fd(pca_fd_fp2, nharm = 5)
+
+scores_fp1 <- data.frame(res_fp1$scores)
+scores_fp2 <- data.frame(res_fp2$scores)
+
+colnames(scores_fp1) <- c("FP1.1", "FP1.2", "FP1.3", "FP1.4", "FP1.5")
+colnames(scores_fp2) <- c("FP2.1", "FP2.2", "FP2.3", "FP2.4", "FP2.5")
+
+fp1_data$condition_factor <- factor(fp1_data$subject.identifier)
+
+fp1modeldata <- cbind(fp1_order, scores_fp1, scores_fp2)
+
+train_indices <- createDataPartition(fp1modeldata$condition_factor, p = 0.75, list = FALSE)
+train_data <- fp1modeldata[train_indices, ]
+test_data <- fp1modeldata[-train_indices, ]
+
+train_model <- multinom(condition_factor ~ 
+                          FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 + 
+                          FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5, 
+                          data = train_data)
+
+predictions <- predict(train_model, newdata = test_data)
+
+confusion_matrix <- table(predictions, test_data$condition_factor)
+print(confusion_matrix)
+
+accuracy <- sum(predictions == test_data$condition_factor) / length(test_data$condition_factor)
+print(accuracy)
+
+
+fp1modeldata <- cbind(fp1_order, scores_fp1, scores_fp2)
+
+train_indices <- createDataPartition(fp1modeldata$subject.identifier, p = 0.75, list = FALSE)
+train_data <- fp1modeldata[train_indices, ]
+test_data <- fp1modeldata[-train_indices, ]
+
+train_model <- multinom(subject.identifier ~ 
+                          FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 + 
+                          FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5, 
+                          data = train_data)
+
+# train_model <- glmnet::glmnet(subject.identifier ~ 
+#                           FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 + 
+#                           FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5, 
+#                           data = train_data)
+
+predictions <- predict(train_model, newdata = test_data)
+
+confusion_matrix <- table(predictions, test_data$subject.identifier)
+print(confusion_matrix)
+
+accuracy <- sum(predictions == test_data$subject.identifier) / length(test_data$subject.identifier)
+print(accuracy)
+```
