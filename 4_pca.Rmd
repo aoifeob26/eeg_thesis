@@ -1,0 +1,197 @@
+---
+title: "4_pca"
+output: html_document
+date: "2025-03-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(fda.usc)
+library(nnet) 
+```
+
+```{r}
+firsttrial <- readRDS("firsttrial_data.rds")
+
+head(firsttrial)
+summary(firsttrial)
+```
+
+Q: is there an average diff between
+
+## Extract FP1 sensor data from 'firsttrial', select name, time, and sensor.value,
+
+## and convert it into a matrix (256 time points × 48 trials)
+
+```{r}
+
+fp1_pca <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr::select(name, time, sensor.value)
+pca_fd_matrix <- matrix(as.numeric(fp1_pca$sensor.value), 
+                       nrow = 256, ncol = 48)
+## Smooth the matrix data to create a functional data object using defined basis parameters
+pca_fd <- smooth.basis(time, pca_fd_matrix, fdParObj)$fd
+res=pca.fd(pca_fd, nharm = 5)
+
+plot(res)
+
+## Define the time grid for functional data analysis
+
+time <- seq(0, 1, length.out = 256)
+
+## Set up a B-spline basis for smoothing with order 4 and an appropriate number of basis functions
+
+norder <- 4
+nbasis <- length(time) + norder - 2  
+basis <- create.bspline.basis(range(time), nbasis, norder, time)
+
+
+Lfdobj <- 2
+lambda <- 1e-2  
+fdParObj <- fdPar(fd(matrix(0, nbasis, 1), basis), Lfdobj, lambda)
+
+## Smooth the functional data for the S1 condition and perform FPCA (5 components)
+s1_fd <- smooth.basis(time,s1_fd_matrix, fdParObj)$fd
+ress1=pca.fd(s1_fd, nharm = 5)
+
+plot(ress1)
+
+
+s2_match_fd <- smooth.basis(time, s2_match_fd_matrix, fdParObj)$fd
+ress2m=pca.fd(s2_match_fd, nharm = 5)
+
+plot(ress2m)
+
+
+s2_nomatch_fd <- smooth.basis(time, s2_nomatch_fd_matrix, fdParObj)$fd
+ress2no=pca.fd(s2_nomatch_fd, nharm = 4)
+
+plot(ress2no)
+
+## Perform permutation-based functional t-tests to compare the conditions
+
+t_test_s1_s2match <- tperm.fd(s1_fd, s2_match_fd)
+t_test_s1_s2nomatch <- tperm.fd(s1_fd, s2_nomatch_fd)
+t_test_s2match_s2nomatch <- tperm.fd(s2_match_fd, s2_nomatch_fd)
+
+
+print("T-test between S1 and S2 Match:")
+print(t_test_s1_s2match)
+
+print("T-test between S1 and S2 No Match:")
+print(t_test_s1_s2nomatch)
+
+print("T-test between S2 Match and S2 No Match:")
+print(t_test_s2match_s2nomatch)
+
+```
+
+## Building a Multinomial Logistic Regression Model with FPCA Scores (FP1 Only)
+
+```{r}
+## Extract FP1 sensor data at time 0, arrange by subject and condition for modeling
+ 
+ 
+fp1_order <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr::select(name,subject.identifier, matching.condition, time, sensor.value) %>%
+  filter(time==0) %>%
+  arrange(subject.identifier, matching.condition, name)
+
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr::select(name,subject.identifier, matching.condition, time, sensor.value) %>%
+  arrange(subject.identifier, matching.condition, name, time)
+
+## Convert the FP1 time series data into a matrix form and smooth it to get the functional data object
+pca_matrix <- matrix(as.numeric(fp1_data$sensor.value), 
+                     nrow = 256, ncol = 48)
+
+## Apply FPCA to extract 5 principal components and plot the FPCA results
+pca_fd <- smooth.basis(time, pca_matrix, fdParObj)$fd
+resfp1 <- pca.fd(pca_fd, nharm = 5)
+
+plot(resfp1)
+
+
+scores <- data.frame(resfp1$scores)
+colnames(scores) <- c("FP1.1", "FP1.2", "FP1.3", "FP1.4", "FP1.5")
+fp1_order$condition_factor <- factor(fp1_order$matching.condition)
+#condition <- c(rep("S1 obj", 16), rep("S2 match", 16), rep("S2 No match,", 16))
+#condition_factor <- factor(condition, levels = c("S1 obj", "S2 match", "S2 No match,"))
+fp1modeldata = cbind(fp1_order,scores)
+
+model <- multinom(condition_factor ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5, data = fp1modeldata)
+
+
+summary(model)
+```
+
+Building a Multinomial Model with FP1 and FP2 Data
+
+```{r}
+fp2_data <- firsttrial %>%
+  filter(sensor.position == "FP2") %>%
+  dplyr::select(name,subject.identifier, matching.condition, time, sensor.value) %>%
+  arrange(subject.identifier, matching.condition, name, time)
+
+## Convert the FP2 data into a matrix and smooth it to create a functional data object
+pca_matrix <- matrix(as.numeric(fp2_data$sensor.value), 
+                     nrow = 256, ncol = 48)
+
+
+pca_fd <- smooth.basis(time, pca_matrix, fdParObj)$fd
+resfp2 <- pca.fd(pca_fd, nharm = 5)
+
+plot(resfp2)
+
+
+scores2 <- data.frame(resfp2$scores)
+colnames(scores2) <- c("FP2.1", "FP2.2", "FP2.3", "FP2.4", "FP2.5")
+
+fp1modeldata = cbind(fp1_order,scores, scores2)
+
+## Build a multinomial logistic regression model to predict subject identifier using combined FP1 & FP2 scores
+model <- multinom(subject.identifier ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 + FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5, data = fp1modeldata)
+
+
+summary(model)
+```
+
+
+```{r}
+
+## Convert the FP1 and FP2 data into matrices.
+## Here, each matrix is constructed with 256 time points (rows) and 48 columns (trials or observations).
+pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), nrow = 256, ncol = 48)
+pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), nrow = 256, ncol = 48)
+
+pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
+pca_fd_fp2 <- smooth.basis(time, pca_matrix_fp2, fdParObj)$fd
+
+## Apply Functional Principal Component Analysis (FPCA) on both FP1 and FP2 functional data objects,
+## extracting 5 principal components from each.
+res_fp1 <- pca.fd(pca_fd_fp1, nharm = 5)
+res_fp2 <- pca.fd(pca_fd_fp2, nharm = 5)
+
+scores_fp1 <- data.frame(res_fp1$scores)
+scores_fp2 <- data.frame(res_fp2$scores)
+
+colnames(scores_fp1) <- c("FP1.1", "FP1.2", "FP1.3", "FP1.4", "FP1.5")
+colnames(scores_fp2) <- c("FP2.1", "FP2.2", "FP2.3", "FP2.4", "FP2.5")
+
+## Assign a condition factor to the FP1 data based on subject identifier for later partitioning.
+fp1_data$condition_factor <- factor(fp1_data$subject.identifier)
+
+## Combine the FP1 ordering data (fp1_order) with the extracted FPCA scores for FP1 and FP2.
+fp1modeldata <- cbind(fp1_order, scores_fp1, scores_fp2)
+```
+

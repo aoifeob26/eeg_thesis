@@ -1,0 +1,24 @@
+---
+title: "7_results"
+output: html_document
+date: "2025-03-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(fda.usc)
+```
+
+```{r}
+firsttrial <- readRDS("firsttrial_data.rds")
+
+head(firsttrial)
+summary(firsttrial)
+```

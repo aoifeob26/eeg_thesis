@@ -1,0 +1,141 @@
+---
+title: "1_data_cleaning"
+output: html_document
+date: "2025-03-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)  
+library(tidyr)
+library(fda.usc)
+
+```
+
+
+
+```{r}
+
+# Get the names of all the files in the data folder underneath the folder this Rmd file is saved in
+filenames <- list.files("/Users/21349803/OneDrive - National University of Ireland, Galway/HDS Project/data/SMNI_CMI_TEST/Test")
+
+# Set up a blank list to hold the data
+files <- list()
+
+# Loop over all the files in the folder
+for(i in 1:length(filenames)){
+  # For each filename, read it in
+  cleaned_data <- read.csv(paste0("/Users/21349803/OneDrive - National University of Ireland, Galway/HDS Project/data/SMNI_CMI_TEST/Test/", filenames[i]))
+  
+  # Perform some cleaning, e.g., selecting only certain sensors
+  cleaned_data <- cleaned_data %>%
+    # Filter for specific sensors, e.g., "FP1" and "FP2"
+    filter(sensor.position %in% c("FP1", "FP2")) %>%
+    
+    # Mutate to ensure categorical variables are factors
+    mutate(
+      sensor.position = as.factor(sensor.position),
+      subject.identifier = as.factor(subject.identifier),
+      trial.number = as.factor(trial.number)
+    ) %>%
+    
+    # Arrange data by trial number and time
+    arrange(trial.number, time)
+  
+  # Now save the cleaned data into the list
+  files[[i]] <- cleaned_data
+}
+
+# Combine the list into a data frame
+dat <- do.call(rbind, files)
+
+# View cleaned data
+head(dat)
+summary(dat)
+
+
+```
+
+
+functional t-test
+
+take subsample of s1obj and one trial number
+
+sample(1:10, )
+unique(dat$name)
+
+
+
+```{r}
+dat$trial.number = as.numeric(as.character(dat$trial.number))
+
+datsmall=dat%>%filter(time==0)
+
+datS1 = datsmall %>% filter(matching.condition=="S1 obj")
+
+
+firsttrial = datS1 %>%
+  group_by(name) %>%
+  mutate(mintrial = as.numeric(min(trial.number))) %>%
+  ungroup() %>%
+  filter(trial.number==mintrial)
+
+firsttrial = datsmall %>%
+  group_by(name, matching.condition) %>%
+  mutate(mintrial = as.numeric(min(trial.number))) %>%
+  ungroup() %>%
+  filter(trial.number==mintrial)
+
+firsttrial = dat %>%
+  group_by(name, matching.condition, sensor.position, time) %>%
+  mutate(mintrial = as.numeric(min(trial.number))) %>%
+  ungroup() %>%
+  filter(trial.number==mintrial)
+
+firsttrial %>% filter(sensor.position  %in% c("FP1", "FP2"),
+                      name != "co2a0000371") %>%
+  ggplot(aes(x=time,y=sensor.value, 
+       color = matching.condition)) +
+  geom_line() + theme(legend.position = "none") + 
+  facet_wrap(~name)
+
+
+firsttrial %>% filter(sensor.position  %in% c("FP1", "FP2"),
+                      name == "co2a0000364") %>%
+  ggplot(aes(x=time,y=sensor.value, 
+       color = subject.identifier)) +
+  geom_line() + theme(legend.position = "none") + 
+  facet_wrap(~name)
+
+
+firsttrial %>% filter(sensor.position  %in% c("FP1", "FP2"),
+                      name != "co2a0000371") %>%
+  ggplot(aes(x=time,y=sensor.value, 
+       color = matching.condition)) +
+  geom_smooth() 
+
+firsttrial %>% filter(sensor.position  %in% c("FP1", "FP2"),
+                      name != "co2a0000371") %>%
+  ggplot(aes(x=time,y=sensor.value, 
+       color = subject.identifier)) +
+  geom_smooth() + facet_wrap(~matching.condition) + theme_bw()
+
+
+
+
+
+```
+ 
+ 
+ The dataset needed cleaning because some columns, like trial.number, were stored as text instead of numbers, which made calculations difficult. There were also multiple trials for each subject and condition, so we had to find and keep only the first trial to make the data consistent and easier to compare. Finally, we filtered the data to focus on specific time points and conditions relevant to the analysis. These steps helped prepare the data for accurate and meaningful analysis.
+ 
+```{r}
+saveRDS(firsttrial, file = "firsttrial_data.rds")
+
+```
+ 
+

@@ -1,0 +1,317 @@
+---
+title: "2_plots"
+output: html_document
+date: "2025-03-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(fda.usc)
+```
+
+```{r}
+firsttrial <- readRDS("firsttrial_data.rds")
+
+head(firsttrial)
+summary(firsttrial)
+```
+
+
+### Individual plots comparing each sensor position and matching condition for Alcoholics and controls (Cleaned data)
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+combined_data <- firsttrial %>%
+  filter((sensor.position %in% c("FP1", "FP2")) &
+           (matching.condition %in% c("S1 obj", "S2 match", "S2 nomatch,")) &
+           (subject.identifier %in% c("c", "a"))) %>%
+  mutate(group = ifelse(subject.identifier == "c", "Control", "Alcoholic")) %>%
+ dplyr::  select(sensor.position, matching.condition, group, time, sensor.value)
+
+unique_conditions <- unique(combined_data$matching.condition)
+unique_positions <- unique(combined_data$sensor.position)
+
+for (condition in unique_conditions) {
+  for (position in unique_positions) {
+    plot_data <- combined_data %>%
+      filter(matching.condition == condition, sensor.position == position)
+    
+    plot_title <- paste("Sensor Values: ", position, " - ", condition, sep = "")
+    
+    plot <- ggplot(plot_data, aes(x = time, y = sensor.value, color = group)) +
+      geom_line() +
+      labs(
+        title = plot_title,
+        x = "Time (ms)",
+        y = "Sensor Value",
+        color = "Group"
+      ) +
+      theme_minimal()
+    
+    print(plot)
+  }
+}
+
+```
+
+###Plots comparing each sensor position and matching condition for Alcoholics and controls (Cleaned data)
+
+```{r}
+table(firsttrial$sensor.position, firsttrial$matching.condition)
+library(ggplot2)
+library(dplyr)
+
+combined_data <- firsttrial %>%
+  filter(
+    sensor.position %in% c("FP1", "FP2"),  
+    matching.condition %in% c("S1 obj", "S2 match", "S2 nomatch,")  
+  ) %>%
+  mutate(
+    group = ifelse(subject.identifier == "c", "Control", "Alcoholic"),
+    matching.condition = factor(
+      matching.condition,
+      levels = c("S1 obj", "S2 match", "S2 nomatch,")  
+    )
+  ) %>%
+  dplyr:: select(sensor.position, matching.condition, group, time, sensor.value)
+
+
+ggplot(combined_data, aes(x = time, y = sensor.value, color = group)) +
+  geom_line() +
+  facet_grid(sensor.position ~ matching.condition, scales = "free_y", drop = FALSE) +  
+  labs(
+    title = "Sensor Values Over Time",
+    subtitle = "Comparing Control and Alcoholic Groups Across Conditions and Positions",
+    x = "Time (ms)",
+    y = "Sensor Value",
+    color = "Group"
+  ) +
+  theme_minimal()
+
+```
+
+### Plots comparing each sensor position and matching condition for Alcoholics and controls (Uncleaned data)
+
+```{r}
+table(dat$sensor.position, dat$matching.condition)
+library(ggplot2)
+library(dplyr)
+
+
+combined_data <- dat %>%
+  filter(
+    sensor.position %in% c("FP1", "FP2"),  
+    matching.condition %in% c("S1 obj", "S2 match", "S2 nomatch,")  
+  ) %>%
+  mutate(
+    group = ifelse(subject.identifier == "c", "Control", "Alcoholic"),
+    matching.condition = factor(
+      matching.condition,
+      levels = c("S1 obj", "S2 match", "S2 nomatch,")  
+    )
+  ) %>%
+  dplyr:: select(sensor.position, matching.condition, group, time, sensor.value)
+
+
+ggplot(combined_data, aes(x = time, y = sensor.value, color = group)) +
+  geom_line() +
+  facet_grid(sensor.position ~ matching.condition, scales = "free_y", drop = FALSE) + 
+  labs(
+    title = "Sensor Values Over Time",
+    subtitle = "Comparing Control and Alcoholic Groups Across Conditions and Positions(Uncleaned)",
+    x = "Time (ms)",
+    y = "Sensor Value",
+    color = "Group"
+  ) +
+  theme_minimal()
+
+```
+
+### Pointwise Differences of Stimuli on Alcoholics and Controls
+
+```{r}
+
+control_s1 <- firsttrial %>%
+  filter(sensor.position == "FP1",
+         matching.condition == "S1 obj",
+         subject.identifier == "c") %>%
+  dplyr::select(name, time, sensor.value)
+control_fd_s1_matrix <- matrix(as.numeric(control_s1$sensor.value), 
+                               nrow = 256, ncol = 8)
+
+
+alcohol_s1 <- firsttrial %>%
+  filter(sensor.position == "FP1",
+         matching.condition == "S1 obj",
+         subject.identifier == "a") %>%
+  dplyr::select(name, time, sensor.value)
+alcohol_fd_s1_matrix <- matrix(as.numeric(alcohol_s1$sensor.value), 
+                               nrow = 256, ncol = 8)
+
+
+control_s2match <- firsttrial %>%
+  filter(sensor.position == "FP1",
+         matching.condition == "S2 match",
+         subject.identifier == "c") %>%
+  dplyr::select(name, time, sensor.value)
+control_fd_s2match_matrix <- matrix(as.numeric(control_s2match$sensor.value), 
+                                    nrow = 256, ncol = 8)
+
+
+alcohol_s2match <- firsttrial %>%
+  filter(sensor.position == "FP1",
+         matching.condition == "S2 match",
+         subject.identifier == "a") %>%
+  dplyr::select(name, time, sensor.value)
+alcohol_fd_s2match_matrix <- matrix(as.numeric(alcohol_s2match$sensor.value), 
+                                    nrow = 256, ncol = 8)
+
+
+control_s2nomatch <- firsttrial %>%
+  filter(sensor.position == "FP1",
+         matching.condition == "S2 nomatch,",
+         subject.identifier == "c") %>%
+  dplyr::select(name, time, sensor.value)
+control_fd_s2nomatch_matrix <- matrix(as.numeric(control_s2nomatch$sensor.value), 
+                                      nrow = 256, ncol = 8)
+
+
+alcohol_s2nomatch <- firsttrial %>%
+  filter(sensor.position == "FP1",
+         matching.condition == "S2 nomatch,",
+         subject.identifier == "a") %>%
+  dplyr::select(name, time, sensor.value)
+alcohol_fd_s2nomatch_matrix <- matrix(as.numeric(alcohol_s2nomatch$sensor.value), 
+                                      nrow = 256, ncol = 8)
+
+
+time <- seq(0, 1, length.out = 256)
+norder <- 10
+nbasis <- length(time) + norder - 2
+basis <- create.bspline.basis(range(time), nbasis, norder, time)
+
+Lfdobj <- 4
+lambda <- 1e-2
+fdParObj <- fdPar(fd(matrix(0, nbasis, 1), basis), Lfdobj, lambda)
+
+
+control_fd_s1 <- smooth.basis(time, control_fd_s1_matrix, fdParObj)$fd
+alcohol_fd_s1 <- smooth.basis(time, alcohol_fd_s1_matrix, fdParObj)$fd
+control_fd_s2match <- smooth.basis(time, control_fd_s2match_matrix, fdParObj)$fd
+alcohol_fd_s2match <- smooth.basis(time, alcohol_fd_s2match_matrix, fdParObj)$fd
+control_fd_s2nomatch <- smooth.basis(time, control_fd_s2nomatch_matrix, fdParObj)$fd
+alcohol_fd_s2nomatch <- smooth.basis(time, alcohol_fd_s2nomatch_matrix, fdParObj)$fd
+
+
+mean_control_s1 <- mean.fd(control_fd_s1)
+mean_alcohol_s1 <- mean.fd(alcohol_fd_s1)
+mean_control_s2match <- mean.fd(control_fd_s2match)
+mean_alcohol_s2match <- mean.fd(alcohol_fd_s2match)
+mean_control_s2nomatch <- mean.fd(control_fd_s2nomatch)
+mean_alcohol_s2nomatch <- mean.fd(alcohol_fd_s2nomatch)
+
+
+diff_s1 <- mean_alcohol_s1 - mean_control_s1
+diff_s2match <- mean_alcohol_s2match - mean_control_s2match
+diff_s2nomatch <- mean_alcohol_s2nomatch - mean_control_s2nomatch
+
+
+y_range <- range(c(diff_s1$coefs, diff_s2match$coefs, diff_s2nomatch$coefs), finite = TRUE)
+
+
+plot(diff_s1, col = "blue", lwd = 2, lty = 1, 
+     main = "Pointwise Differences of Stimuli on Alcoholics and Controls",
+     ylab = "Difference in Sensor Value", xlab = "Time", ylim = y_range)
+lines(diff_s2match, col = "purple", lwd = 2, lty = 2)
+lines(diff_s2nomatch, col = "red", lwd = 2, lty = 3)
+abline(h = 0, col = "black", lty = 3)  
+
+
+legend("topright", legend = c("S1", "S2 Match", "S2 No Match"),
+       col = c("blue", "purple", "red"), lty = c(1, 2, 3), lwd = 2)
+
+
+```
+
+### Pointwise Differences Between FP1 and FP2
+
+```{r}
+
+alcohol_fp1 <- firsttrial %>%
+  filter(sensor.position == "FP1",
+         subject.identifier == "a") %>%
+  dplyr::select(name, time, sensor.value)
+alcohol_fp1_matrix <- matrix(as.numeric(alcohol_fp1$sensor.value), 
+                             nrow = 256, ncol = 8) 
+
+control_fp1 <- firsttrial %>%
+  filter(sensor.position == "FP1",
+         subject.identifier == "c") %>%
+  dplyr::select(name, time, sensor.value)
+control_fp1_matrix <- matrix(as.numeric(control_fp1$sensor.value), 
+                             nrow = 256, ncol = 8)  
+
+
+alcohol_fp2 <- firsttrial %>%
+  filter(sensor.position == "FP2",
+         subject.identifier == "a") %>%
+  dplyr::select(name, time, sensor.value)
+alcohol_fp2_matrix <- matrix(as.numeric(alcohol_fp2$sensor.value), 
+                             nrow = 256, ncol = 8)  
+
+
+control_fp2 <- firsttrial %>%
+  filter(sensor.position == "FP2",
+         subject.identifier == "c") %>%
+  dplyr::select(name, time, sensor.value)
+control_fp2_matrix <- matrix(as.numeric(control_fp2$sensor.value), 
+                             nrow = 256, ncol = 8)  
+
+
+time <- seq(0, 1, length.out = 256)
+norder <- 10
+nbasis <- length(time) + norder - 2
+basis <- create.bspline.basis(range(time), nbasis, norder, time)
+
+
+Lfdobj <- 4
+lambda <- 1e-2
+fdParObj <- fdPar(fd(matrix(0, nbasis, 1), basis), Lfdobj, lambda)
+
+
+alcohol_fp1_fd <- smooth.basis(time, alcohol_fp1_matrix, fdParObj)$fd
+control_fp1_fd <- smooth.basis(time, control_fp1_matrix, fdParObj)$fd
+
+
+alcohol_fp2_fd <- smooth.basis(time, alcohol_fp2_matrix, fdParObj)$fd
+control_fp2_fd <- smooth.basis(time, control_fp2_matrix, fdParObj)$fd
+
+
+mean_alcohol_fp1 <- mean.fd(alcohol_fp1_fd)
+mean_alcohol_fp2 <- mean.fd(alcohol_fp2_fd)
+mean_control_fp1 <- mean.fd(control_fp1_fd)
+mean_control_fp2 <- mean.fd(control_fp2_fd)
+
+
+mean_diff_alcohol <- mean_alcohol_fp1 - mean_alcohol_fp2
+mean_diff_control <- mean_control_fp1 - mean_control_fp2
+
+
+plot(mean_diff_alcohol, col = "red", lwd = 2, 
+     main = "Pointwise Differences Between FP1 and FP2",
+     ylab = "Difference in Sensor Value", xlab = "Time", ylim = c(-2, 6))
+lines(mean_diff_control, col = "blue", lwd = 2, lty = 2)
+legend("topright", legend = c("Alcoholics", "Controls"),
+       col = c("red", "blue"), lty = c(1, 2), lwd = 2)
+
+```
