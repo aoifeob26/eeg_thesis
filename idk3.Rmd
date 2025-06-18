@@ -1,0 +1,181 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-04-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load & Prepare Data
+
+```{r}
+library(fda)
+library(dplyr)
+library(ggplot2)
+library(randomForest)
+library(caret)
+library(vip)
+
+# Load full EEG dataset
+firsttrial <- readRDS("firsttrial_allsensors_data.rds")
+time <- seq(0, 1, length.out = 256)
+
+# FPCA settings
+nharm <- 20
+basis <- create.fourier.basis(rangeval = range(time), nbasis = nharm*2)
+fdParObj <- fdPar(basis, Lfdobj = 2, lambda = 1e-2)
+
+extract_scores <- function(electrode) {
+  data <- firsttrial %>% filter(sensor.position == electrode) %>%
+    arrange(matching.condition, subject.identifier, name, time)
+  mat <- matrix(as.numeric(data$sensor.value), nrow = 256)
+  fd <- smooth.basis(time, mat, fdParObj)$fd
+  pca <- pca.fd(fd, nharm = nharm)
+  scores <- as.data.frame(pca$scores)
+  colnames(scores) <- paste0(electrode, "_", 1:nharm)
+  return(scores)
+}
+
+# Extract FPCA scores for 4 electrodes
+scores_fp1 <- extract_scores("FP1")
+scores_fp2 <- extract_scores("FP2")
+scores_f3  <- extract_scores("F3")
+scores_f4  <- extract_scores("F4")
+
+# Metadata (same for all)
+meta <- firsttrial %>% filter(sensor.position == "FP1", time == 0) %>%
+  dplyr::select(subject.identifier, matching.condition)
+
+# Combine FP1 + FP2 only
+fpca_base <- cbind(meta, scores_fp1, scores_fp2)
+fpca_base$subject.identifier <- as.factor(fpca_base$subject.identifier)
+
+# Combine all 4 electrodes
+fpca_full <- cbind(meta, scores_fp1, scores_fp2, scores_f3, scores_f4)
+fpca_full$subject.identifier <- as.factor(fpca_full$subject.identifier)
+```
+
+## Baseline Random Forest (FP1 + FP2)
+
+```{r}
+features_base <- grep("^(FP1|FP2)_", names(fpca_base), value = TRUE)
+model_base <- fpca_base %>% dplyr::select(subject.identifier, all_of(features_base))
+
+set.seed(123)
+split_base <- createDataPartition(model_base$subject.identifier, p = 0.7, list = FALSE)
+train_base <- model_base[split_base, ]
+test_base  <- model_base[-split_base, ]
+
+formula_base <- as.formula(paste("subject.identifier ~", paste(features_base, collapse = " + ")))
+rf_base <- randomForest(formula_base, data = train_base, importance = TRUE)
+pred_base <- predict(rf_base, newdata = test_base)
+confusionMatrix(pred_base, test_base$subject.identifier)
+```
+
+## Extended Model (Add F3 & F4)
+
+```{r}
+features_full <- grep("^(FP1|FP2|F3|F4)_", names(fpca_full), value = TRUE)
+model_full <- fpca_full %>% dplyr::select(subject.identifier, all_of(features_full))
+
+set.seed(123)
+split_full <- createDataPartition(model_full$subject.identifier, p = 0.7, list = FALSE)
+train_full <- model_full[split_full, ]
+test_full  <- model_full[-split_full, ]
+
+formula_full <- as.formula(paste("subject.identifier ~", paste(features_full, collapse = " + ")))
+rf_full <- randomForest(formula_full, data = train_full, importance = TRUE)
+pred_full <- predict(rf_full, newdata = test_full)
+confusionMatrix(pred_full, test_full$subject.identifier)
+```
+
+## Feature Selection + Tuning
+
+```{r}
+# Use top 10 features from full model
+importance_df <- as.data.frame(importance(rf_full))
+top_features <- rownames(importance_df)[order(importance_df$MeanDecreaseGini, decreasing = TRUE)][1:10]
+formula_reduced <- as.formula(paste("subject.identifier ~", paste(top_features, collapse = " + ")))
+
+rf_tuned <- train(
+  formula_reduced,
+  data = train_full,
+  method = "rf",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneLength = 10
+)
+
+rf_pred_tuned <- predict(rf_tuned, newdata = test_full)
+confusionMatrix(rf_pred_tuned, test_full$subject.identifier)
+```
+
+## Accuracy Comparison Plot
+
+```{r}
+barplot(
+  c(FP1_FP2 = mean(pred_base == test_base$subject.identifier),
+    All4 = mean(pred_full == test_full$subject.identifier),
+    Tuned = mean(rf_pred_tuned == test_full$subject.identifier)),
+  names.arg = c("FP1+FP2", "FP1-4", "Top10 Tuned"),
+  col = c("skyblue", "orange", "seagreen"),
+  ylim = c(0, 1),
+  main = "Test Set Accuracy by Model",
+  ylab = "Accuracy"
+)
+
+```
+```{r}
+# Use top 10 features from full model
+vip(rf_tuned$finalModel, num_features = 10)
+
+```
+```{r}
+library(rpart)
+library(rpart.plot)
+
+# Fit full tree
+tree_model <- rpart(formula_full, data = train_full, method = "class", cp = 0.001)
+
+# Visualize full tree
+rpart.plot(tree_model, main = "Full Classification Tree")
+
+# Print CP table (complexity plot)
+printcp(tree_model)
+plotcp(tree_model)
+
+# Prune tree using optimal CP
+opt_cp <- tree_model$cptable[which.min(tree_model$cptable[,"xerror"]), "CP"]
+pruned_tree <- prune(tree_model, cp = opt_cp)
+rpart.plot(pruned_tree, main = "Pruned Tree")
+
+# Evaluate pruned tree
+tree_pred <- predict(pruned_tree, newdata = test_full, type = "class")
+print(confusionMatrix(tree_pred, test_full$subject.identifier))
+
+```
+```{r}
+library(partykit)
+
+ctree_model <- ctree(formula_full, data = train_full)
+plot(ctree_model, main = "Conditional Inference Tree")
+
+ctree_pred <- predict(ctree_model, newdata = test_full)
+print(confusionMatrix(ctree_pred, test_full$subject.identifier))
+
+```
+```{r}
+final_results <- data.frame(
+  Model = c("FP1 + FP2", "All 4 Electrodes", "Top 10 Features (Tuned)"),
+  Accuracy = round(c(
+    mean(pred_base == test_base$subject.identifier),
+    mean(pred_full == test_full$subject.identifier),
+    mean(rf_pred_tuned == test_full$subject.identifier)
+  ), 2)
+)
+
+knitr::kable(final_results, caption = "Comparison of Model Accuracy")
+
+```
+

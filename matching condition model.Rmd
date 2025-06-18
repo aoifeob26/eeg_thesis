@@ -1,15 +1,26 @@
 ---
-title: "R Notebook"
-output: html_notebook
+title: "mathcing condition model"
+output: html_document
+date: "2025-03-18"
 ---
 
-```{r}
-firsttrial <- readRDS("firsttrial_data.rds")
-
-head(firsttrial)
-summary(firsttrial)
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
+
+```{r}
+
+# Load necessary libraries
+library(tidyverse)
+library(fda)
+library(nnet)
+library(caret)
+library(glmnet)
+
+# Load dataset
+firsttrial <- readRDS("firsttrial_data.rds")
+```
 
 ```{r}
 # Define the time grid for 256 points between 0 and 1
@@ -29,32 +40,33 @@ fdParObj <- fdPar(fd(matrix(0, nbasis, 1), basis), Lfdobj, lambda)
 smooth_fd <- function(sensor_matrix, time, fdParObj) {
   smooth.basis(time, sensor_matrix, fdParObj)$fd
 }
-```
+
+# Extract FP1 sensor data
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr::select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
 
 
-```{r}
-# Extract FP1 sensor data from firsttrial for FP1
+
+# Convert the FP1 time series data into a matrix form and smooth it to get the functional data object
+pca_matrix <- matrix(as.numeric(fp1_data$sensor.value), nrow = 256, ncol = 48)
+pca_fd <- smooth.basis(time, pca_matrix, fdParObj)$fd
+
+# Apply FPCA to extract principal components
+res_fp1 <- pca.fd(pca_fd, nharm = nbasis) 
+
+# Determine the number of FPCs that explain at least 95% of the variance
 nharms_95 <- which(cumsum(res_fp1$varprop) >= 0.95)[1]
 
-fp1_pca <- firsttrial %>%
-  filter(sensor.position == "FP1") %>%
-dplyr::  select(name, time, sensor.value)
-
-# Convert sensor values to a matrix (256 time points x 48 trials)
-pca_fd_matrix <- matrix(as.numeric(fp1_pca$sensor.value), nrow = 256, ncol = 48)
-
-# Smooth the matrix data to create a functional data object
-pca_fd <- smooth.basis(time, pca_fd_matrix, fdParObj)$fd
-
-# Perform FPCA to extract 5 principal components and plot the results
+# Re-run FPCA with the determined number of components
 res_fp1 <- pca.fd(pca_fd, nharm = nharms_95)
 plot(res_fp1)
-
 ```
 
 
+
 ```{r}
-nharms_95 <- which(cumsum(res_fp1$varprop) >= 0.95)[1]
 # Extract FP1 sensor data for alcoholics ("a")
 alc_data <- firsttrial %>%
   filter(sensor.position == "FP1", subject.identifier == "a") %>%
@@ -90,40 +102,26 @@ plot(res_control)
 ```
 
 
-```{r}
-
-# Alcoholics ("a") vs Controls ("c") for FP1 sensor data
-t_test_alc_control <- tperm.fd(alc_fd, control_fd)
-
-# Print results for Alcoholics vs Controls comparison
-print(t_test_alc_control)
-
-
-```
 
 
 ```{r}
-
 # Extract FP1 ordering data at time 0 for modeling
 fp1_order <- firsttrial %>%
   filter(sensor.position == "FP1") %>%
-  dplyr:: select(name, subject.identifier, subject.identifier, time, sensor.value) %>%
+  dplyr:: select(name, matching.condition, subject.identifier, time, sensor.value) %>%
   filter(time == 0) %>%
-  arrange(subject.identifier, subject.identifier, name)
+  arrange(matching.condition, subject.identifier, name)
 
 # Extract the full FP1 time series data
 fp1_data <- firsttrial %>%
   filter(sensor.position == "FP1") %>%
- dplyr::  select(name, subject.identifier, subject.identifier, time, sensor.value) %>%
-  arrange(subject.identifier, subject.identifier, name, time)
+ dplyr::  select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
 
 ```
 
 
 ```{r}
-
-nharms_95 <- which(cumsum(res_fp1$varprop) >= 0.95)[1]
-
 # Convert FP1 data to a matrix (256 x 48) and smooth it
 pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), nrow = 256, ncol = 48)
 pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
@@ -134,16 +132,16 @@ plot(resfp1)
 
 # Extract FPCA scores and prepare modeling data
 scores <- data.frame(resfp1$scores)
-colnames(scores) <- paste0("FP1.", 1:5)
+colnames(scores) <- paste0("FP1.", 1:nharms_95)
 
-# Create a factor for the condition based on subject.identifier
-fp1_order$condition_factor <- factor(fp1_order$subject.identifier)
+# Create a factor for the condition based on matching.condition
+fp1_order$condition_factor <- factor(fp1_order$matching.condition)
 
 # Combine ordering information with FPCA scores
 fp1modeldata <- cbind(fp1_order, scores)
 
 # Build a multinomial logistic regression model using FP1 scores
-model_fp1 <- multinom(condition_factor ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5, 
+model_fp1 <- nnet:: multinom(condition_factor ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5, 
                       data = fp1modeldata)
 summary(model_fp1)
 
@@ -151,13 +149,11 @@ summary(model_fp1)
 
 
 ```{r}
-
-nharms_95 <- which(cumsum(res_fp1$varprop) >= 0.95)[1]
 # Extract FP2 data
 fp2_data <- firsttrial %>%
   filter(sensor.position == "FP2") %>%
-  dplyr:: select(name, subject.identifier, subject.identifier, time, sensor.value) %>%
-  arrange(subject.identifier, subject.identifier, name, time)
+  dplyr:: select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
 
 # Convert FP2 sensor data into a matrix (256 x 48) and smooth it
 pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), nrow = 256, ncol = 48)
@@ -169,7 +165,7 @@ plot(resfp2)
 
 # Extract FP2 scores
 scores2 <- data.frame(resfp2$scores)
-colnames(scores2) <- paste0("FP2.", 1:5)
+colnames(scores2) <- paste0("FP2.", 1:nharms_95)
 
 ```
 
@@ -179,7 +175,7 @@ colnames(scores2) <- paste0("FP2.", 1:5)
 fp1modeldata <- cbind(fp1_order, scores, scores2)
 
 # Build a multinom model predicting subject identifier using combined scores
-model_combined <- multinom(subject.identifier ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 +
+model_combined <- nnet:: multinom(matching.condition ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 +
                              FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5, 
                            data = fp1modeldata)
 summary(model_combined)
@@ -188,18 +184,17 @@ summary(model_combined)
 
 ```{r}
 ## Extract FP1 sensor data at time 0, arrange by subject and condition for modeling
-nharms_95 <- which(cumsum(res_fp1$varprop) >= 0.95)[1]
  
 fp1_order <- firsttrial %>%
   filter(sensor.position == "FP1") %>%
-  dplyr::select(name,subject.identifier, subject.identifier, time, sensor.value) %>%
+  dplyr::select(name,matching.condition, subject.identifier, time, sensor.value) %>%
   filter(time==0) %>%
-  arrange(subject.identifier, subject.identifier, name)
+  arrange(matching.condition, subject.identifier, name)
 
 fp1_data <- firsttrial %>%
   filter(sensor.position == "FP1") %>%
-  dplyr::select(name,subject.identifier, subject.identifier, time, sensor.value) %>%
-  arrange(subject.identifier, subject.identifier, name, time)
+  dplyr::select(name,matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
 
 ## Convert the FP1 time series data into a matrix form and smooth it to get the functional data object
 pca_matrix <- matrix(as.numeric(fp1_data$sensor.value), 
@@ -213,13 +208,13 @@ plot(resfp1)
 
 
 scores <- data.frame(resfp1$scores)
-colnames(scores) <- c("FP1.1", "FP1.2", "FP1.3", "FP1.4", "FP1.5")
-fp1_order$condition_factor <- factor(fp1_order$subject.identifier)
+colnames(scores) <- c("FP1.1", "FP1.2", "FP1.3", "FP1.4", "FP1.5","FP1.6","FP1.7","FP1.8","FP1.9")
+fp1_order$condition_factor <- factor(fp1_order$matching.condition)
 #condition <- c(rep("S1 obj", 16), rep("S2 match", 16), rep("S2 No match,", 16))
 #condition_factor <- factor(condition, levels = c("S1 obj", "S2 match", "S2 No match,"))
 fp1modeldata = cbind(fp1_order,scores)
 
-model <- multinom(condition_factor ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5, data = fp1modeldata)
+model <- nnet:: multinom(condition_factor ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 + FP1.6 + FP1.7 + FP1.8 + FP1.9, data = fp1modeldata)
 
 
 summary(model)
@@ -228,12 +223,10 @@ summary(model)
 Building a Multinomial Model with FP1 and FP2 Data
 
 ```{r}
-nharms_95 <- which(cumsum(res_fp1$varprop) >= 0.95)[1]
-
 fp2_data <- firsttrial %>%
   filter(sensor.position == "FP2") %>%
-  dplyr::select(name,subject.identifier, subject.identifier, time, sensor.value) %>%
-  arrange(subject.identifier, subject.identifier, name, time)
+  dplyr::select(name,matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
 
 ## Convert the FP2 data into a matrix and smooth it to create a functional data object
 pca_matrix <- matrix(as.numeric(fp2_data$sensor.value), 
@@ -247,12 +240,12 @@ plot(resfp2)
 
 
 scores2 <- data.frame(resfp2$scores)
-colnames(scores2) <- c("FP2.1", "FP2.2", "FP2.3", "FP2.4", "FP2.5")
+colnames(scores2) <- c("FP2.1", "FP2.2", "FP2.3", "FP2.4", "FP2.5","FP2.6","FP2.7","FP2.8","FP2.9")
 
 fp1modeldata = cbind(fp1_order,scores, scores2)
 
 ## Build a multinomial logistic regression model to predict subject identifier using combined FP1 & FP2 scores
-model <- multinom(subject.identifier ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 + FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5, data = fp1modeldata)
+model <- nnet:: multinom(matching.condition ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 + FP1.6 + FP1.7 + FP1.8 + FP1.9 + FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5 + FP2.6 + FP2.7 + FP2.8 + FP2.9, data = fp1modeldata)
 
 
 summary(model)
@@ -265,8 +258,8 @@ Train-Test Split and Model Evaluation
 set.seed(123)  
  # clustering functions kmeans etc
 
-## Partition the data into 75% training and 25% testing based on subject.identifier
-train_indices <- createDataPartition(fp1modeldata$subject.identifier, p =0.75, list=F) #subject.identifier and subject identifier
+## Partition the data into 75% training and 25% testing based on matching.condition
+train_indices <- createDataPartition(fp1modeldata$matching.condition, p =0.75, list=F) #matching.condition and subject identifier
 
 as.vector(train_indices)
 
@@ -280,8 +273,8 @@ test_condition <- test_scores$condition_factor
 train_scores_df <- data.frame(train_scores)
 test_scores_df <- data.frame(test_scores)
 
-## Partition the data into 75% training and 25% testing based on subject.identifier
-train_model_fp1 <- multinom(train_condition ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 , data = train_scores_df)
+## Partition the data into 75% training and 25% testing based on matching.condition
+train_model_fp1 <- nnet:: multinom(train_condition ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 + FP1.6 + FP1.7 + FP1.8 + FP1.9 , data = train_scores_df)
 
 ## Generate predictions on the test set and create a confusion matrix to evaluate performance
 predictions <- predict(train_model_fp1, newdata = test_scores_df)
@@ -303,8 +296,7 @@ Multinomial Model Using FP2 Scores Only
 ```{r}
 
 ## Train a multinomial logistic regression model using only the FP2 principal component scores.
-## The model predicts the subject.identifier (stored in 'train_condition') based on FP2 scores
-train_model_fp2 <- multinom(train_condition ~ FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5 , data = train_scores_df)
+train_model_fp2 <- nnet:: multinom(train_condition ~ FP2.1 + FP2.2 + FP2.3 + FP2.4 + FP2.5 + FP2.6 + FP2.7 + FP2.8 + FP2.9 , data = train_scores_df)
 
 
 predictions <- predict(train_model_fp2, newdata = test_scores_df)
@@ -322,8 +314,7 @@ Multinomial Model Using FP1 Scores Only
 
 ```{r}
 ## Partition the data based on subject identifier (via condition_factor) into training and test sets.
-## 'fp1_order' contains FP1 data at time 0; we use this along with FPCA scores.
-train_indices <- createDataPartition(fp1modeldata$subject.identifier, p =0.75, list=F) #subject.identifier and subject identifier
+train_indices <- createDataPartition(fp1modeldata$matching.condition, p =0.75, list=F) #matching.condition and subject identifier
 
 as.vector(train_indices)
 
@@ -338,13 +329,12 @@ train_scores_df <- data.frame(train_scores)
 test_scores_df <- data.frame(test_scores)
 
 ## Train a multinomial logistic regression model using FP1 principal component scores.
-## This model predicts the subject.identifier (condition_factor) from FP1 scores.
-train_model_fp1 <- multinom(train_condition ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 , data = train_scores_df)
+train_model_fp1 <- nnet:: multinom(train_condition ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5 + FP1.6 + FP1.7 + FP1.8 + FP1.9 , data = train_scores_df)
 
-## Predict subject.identifiers on the test dataset using the FP1 model.
+## Predict matching.conditions on the test dataset using the FP1 model.
 predictions <- predict(train_model_fp1, newdata = test_scores_df)
 
-## Build a confusion matrix to compare predicted vs. actual subject.identifiers.
+## Build a confusion matrix to compare predicted vs. actual matching.conditions.
 confusion_matrix <- table(predictions, test_condition)
 print(confusion_matrix)
 
@@ -358,14 +348,28 @@ accuracy really low above
 
 
 ```{r}
+set.seed(123)
+train_indices <- createDataPartition(fp1modeldata$subject.identifier, p = 0.75, list = FALSE)
+train_data <- fp1modeldata[train_indices, ]
+test_data <- fp1modeldata[-train_indices, ]
+
 # Extract the scores and convert them to a matrix
-predictors <- as.matrix(fp1modeldata[, c("FP1.1", "FP1.2", "FP1.3", "FP1.4", "FP1.5", "FP2.1", "FP2.2", "FP2.3", "FP2.4", "FP2.5")])
+predictors_train <- as.matrix(train_data[, c("FP1.1", "FP1.2", "FP1.3", "FP1.4", "FP1.5", 
+                                             "FP1.6", "FP1.7", "FP1.8", "FP1.9", 
+                                             "FP2.1", "FP2.2", "FP2.3", "FP2.4", "FP2.5",
+                                             "FP2.6", "FP2.7", "FP2.8", "FP2.9")])
+
+predictors_test <- as.matrix(test_data[, c("FP1.1", "FP1.2", "FP1.3", "FP1.4", "FP1.5", 
+                                           "FP1.6", "FP1.7", "FP1.8", "FP1.9", 
+                                           "FP2.1", "FP2.2", "FP2.3", "FP2.4", "FP2.5",
+                                           "FP2.6", "FP2.7", "FP2.8", "FP2.9")])
 
 # Convert the outcome variable into a factor for multinomial regression
-response <- as.factor(fp1modeldata$subject.identifier)
+response_train <- as.factor(train_data$matching.condition)
+response_test <- as.factor(test_data$matching.condition)
 
-# Fit the Lasso model with cross-validation
-lasso_model <- cv.glmnet(predictors, response, alpha = 1, family = "multinomial", type.measure = "class")
+# Fit the LASSO model with cross-validation
+lasso_model <- cv.glmnet(predictors_train, response_train, alpha = 1, family = "multinomial", type.measure = "class")
 
 # Print the best lambda value
 print(paste("Best lambda: ", lasso_model$lambda.min))
@@ -373,15 +377,14 @@ print(paste("Best lambda: ", lasso_model$lambda.min))
 # Get the coefficients of the best model
 coef(lasso_model, s = "lambda.min")
 
-# Use the fitted Lasso model to make predictions on the test set
-predictions_lasso <- predict(lasso_model, newx = as.matrix(test_scores_df[, c("FP1.1", "FP1.2", "FP1.3", "FP1.4", "FP1.5", "FP2.1", "FP2.2", "FP2.3", "FP2.4", "FP2.5")]), s = "lambda.min", type = "class")
+# Use the fitted LASSO model to make predictions on the test set
+predictions_lasso <- predict(lasso_model, newx = predictors_test, s = "lambda.min", type = "class")
 
 # Build confusion matrix to evaluate performance
-confusion_matrix_lasso <- table(predictions_lasso, test_condition)
+confusion_matrix_lasso <- table(predictions_lasso, response_test)
 print(confusion_matrix_lasso)
 
-# Calculate and print the model's accuracy
-accuracy_lasso <- sum(predictions_lasso == test_condition) / length(test_condition)
-print(accuracy_lasso)
-
+# Compute accuracy
+accuracy_lasso <- mean(predictions_lasso == response_test)
+print(paste("LASSO Model Accuracy:", round(accuracy_lasso * 100, 2), "%"))
 ```

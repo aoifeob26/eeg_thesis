@@ -1,0 +1,148 @@
+---
+title: "4_pca_bspline"
+output: html_document
+date: "2025-03-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(fda.usc)
+library(nnet) 
+```
+
+```{r}
+firsttrial <- readRDS("firsttrial_data.rds")
+
+head(firsttrial)
+summary(firsttrial)
+```
+
+
+```{r}
+# Define the time grid for 256 points between 0 and 1
+time <- seq(0, 1, length.out = 256)
+
+# Define B-spline basis parameters for smoothing FPCA data
+norder <- 4
+nbasis <-  length(time) / 2 
+basis <- create.bspline.basis(rangeval = range(time), nbasis = nbasis, norder = norder)
+
+# Define the penalty and smoothing parameter
+Lfdobj <- 2    
+lambda <- 1e-2
+fdParObj <- fdPar(fd(matrix(0, nbasis, 1), basis), Lfdobj, lambda)
+
+# Smoothing helper function: converts a sensor matrix into a functional data object.
+smooth_fd <- function(sensor_matrix, time, fdParObj) {
+  smooth.basis(time, sensor_matrix, fdParObj)$fd
+}
+
+# Extract FP1 sensor data
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr::select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
+```
+
+# Don't pass time as breaks – it overloaded the basis function
+
+# Too many breaks (256) violated the nbasis = norder + breaks - 2 rule
+
+# Using default breaks avoids basis function mismatch
+
+# This setup keeps the basis smoother and avoids overfitting
+
+# Basis now has fewer functions → better smoothing for FPCA
+
+# Clean fix: let fda package handle internal break placement
+
+# Reduced complexity by letting basis use default knots
+
+
+
+```{r}
+# Extract FP1 ordering data at time 0 for modeling
+fp_order <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr:: select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  filter(time == 0) %>%
+  arrange(matching.condition, subject.identifier, name)
+
+# Extract the full FP1 time series data
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+ dplyr::  select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
+
+```
+
+
+```{r}
+# Convert FP1 data to a matrix (256 x 48) and smooth it
+pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), nrow = 256, ncol = 48)
+pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
+plot(pca_fd_fp1)
+
+
+nharm <- 7  # based on scree/eigenfunction plots
+resfp1 <- pca.fd(pca_fd_fp1, nharm = nharm)
+plot(resfp1)
+
+saveRDS(resfp1,"resfp1.rds")
+
+# Extract FPCA scores and prepare modeling data
+scores <- data.frame(resfp1$scores)
+colnames(scores) <- paste0("FP1.", seq_len(ncol(scores)))
+
+# Create a factor for the condition based on subject.identifier
+fp_order$condition_factor <- factor(fp_order$subject.identifier)
+
+# Combine ordering information with FPCA scores
+fpca_scores_bspline <- cbind(fp_order, scores)
+
+```
+
+
+```{r}
+# Extract FP2 data
+fp2_data <- firsttrial %>%
+  filter(sensor.position == "FP2") %>%
+  dplyr:: select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
+
+# Convert FP2 sensor data into a matrix (256 x 48) and smooth it
+pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), nrow = 256, ncol = 48)
+pca_fd_fp2 <- smooth.basis(time, pca_matrix_fp2, fdParObj)$fd
+
+nharm <- 7  # based on scree/eigenfunction plots
+resfp2 <- pca.fd(pca_fd_fp2, nharm = nharm)
+
+saveRDS(resfp2,"resfp2.rds")
+
+# Extract FP2 scores
+scores2 <- data.frame(resfp2$scores)
+colnames(scores2) <- paste0("FP2.",seq_len(ncol(scores2)))
+
+```
+
+
+```{r}
+# Combine FP1 ordering data with FP1 and FP2 FPCA scores
+fpca_scores_bspline <- cbind(fp_order, scores, scores2)
+
+saveRDS(fpca_scores_bspline, "fpca_scores_bspline.rds")
+```
+
+
+```{r}
+plot(pca_fd_fp1)
+plot(pca_fd_fp2)
+```
+

@@ -1,0 +1,223 @@
+---
+title: "FPCA & Clustering Visualisations"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(fda)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(patchwork)
+library(gridExtra)
+library(fdapace)
+```
+
+### Load Data
+```{r}
+firsttrial <- readRDS("firsttrial_data.rds")         
+fpca_scores_bspline <- readRDS("fpca_scores_bspline.rds")  
+fpca_scores_fourier <- readRDS("fpca_scores_fourier.rds")  
+final_clusters <- readRDS("final_clusters.rds")    
+#bspline
+res_fp1 <- readRDS("resfp1.rds")    
+res_fp2 <- readRDS("resfp2.rds")  
+#fourier
+res.fp1 <- readRDS("res.fp1.rds")                  
+res.fp2 <- readRDS("res.fp2.rds") 
+```
+
+### FPCA via PACE (Sparse)
+```{r}
+dfresponse <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr::select(name, time, sensor.value) %>%
+  na.omit() %>%
+  group_by(name, time) %>%
+  summarise(sensor.value = mean(sensor.value), .groups = "drop")
+
+list_format <- split(dfresponse, dfresponse$name)
+list_time <- lapply(list_format, function(df) df$time)
+list_response <- lapply(list_format, function(df) df$sensor.value)
+
+duplicates <- which(unlist(lapply(list_time, function(x) length(x) != length(unique(x)))))
+if (length(duplicates) > 0) {
+  list_time <- list_time[-duplicates]
+  list_response <- list_response[-duplicates]
+}
+
+resPACE <- FPCA(Ly = list_response, Lt = list_time,
+                optns = list(dataType = 'Sparse'))
+plot(resPACE)
+```
+
+```{r}
+dfresponse <- firsttrial %>%
+  filter(sensor.position == "FP2") %>%
+  dplyr::select(name, time, sensor.value) %>%
+  na.omit() %>%
+  group_by(name, time) %>%
+  summarise(sensor.value = mean(sensor.value), .groups = "drop")
+
+list_format <- split(dfresponse, dfresponse$name)
+list_time <- lapply(list_format, function(df) df$time)
+list_response <- lapply(list_format, function(df) df$sensor.value)
+
+duplicates <- which(unlist(lapply(list_time, function(x) length(x) != length(unique(x)))))
+if (length(duplicates) > 0) {
+  list_time <- list_time[-duplicates]
+  list_response <- list_response[-duplicates]
+}
+
+resPACE <- FPCA(Ly = list_response, Lt = list_time,
+                optns = list(dataType = 'Sparse'))
+plot(resPACE)
+```
+
+```
+
+
+### FPCA Summary Plots (FP1)
+```{r}
+varprop <- res.fp1$varprop
+scree_df <- tibble(PC = paste0("PC", seq_along(varprop)), 
+                   Variance = varprop)
+
+scree_df %>% 
+  slice(1:10) %>% 
+  ggplot(aes(x = PC, y = Variance)) +
+  geom_col(fill = "steelblue") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Scree Plot for FP1", 
+       y = "Proportion of Variance Explained", 
+       x = "Principal Components") +
+  theme_minimal()
+```
+
+```{r}
+plot(res.fp1$meanfd, 
+     main = "Mean EEG Curve (FP1)", 
+     xlab = "Time (s)", 
+     ylab = "Amplitude")
+```
+
+```{r}
+plot(res.fp1$harmonics[1:3], 
+     main = "First Three Eigenfunctions (FP1)",
+     xlab = "Time (s)", 
+     ylab = "Amplitude")
+
+plot(res.fp1)
+```
+
+### FPCA Summary Plots (FP2)
+```{r}
+varprop2 <- res.fp2$varprop
+scree_df2 <- tibble(PC = paste0("PC", seq_along(varprop2)), 
+                   Variance = varprop2)
+
+scree_df2 %>% 
+  slice(1:10) %>% 
+  ggplot(aes(x = PC, y = Variance)) +
+  geom_col(fill = "darkred") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Scree Plot for FP2", 
+       y = "Proportion of Variance Explained", 
+       x = "Principal Components") +
+  theme_minimal()
+```
+
+```{r}
+plot(res.fp2$meanfd, 
+     main = "Mean EEG Curve (FP2)", 
+     xlab = "Time (s)", 
+     ylab = "Amplitude")
+```
+
+```{r}
+plot(res.fp2$harmonics[1:3], 
+     main = "First Three Eigenfunctions (FP2)",
+     xlab = "Time (s)", 
+     ylab = "Amplitude")
+```
+
+
+### Wiggly Curves by FP1 and FP2 Score Grouping
+```{r}
+fpca_scores_fourier <- fpca_scores_fourier %>%
+  mutate(fp1_group = case_when(
+    FP1.1 >= quantile(FP1.1, 0.8) ~ "highfp1",
+    FP1.1 <= quantile(FP1.1, 0.2) ~ "lowfp1",
+    TRUE ~ NA_character_
+  ),
+  fp2_group = case_when(
+    FP2.1 >= quantile(FP2.1, 0.8) ~ "highfp2",
+    FP2.1 <= quantile(FP2.1, 0.2) ~ "lowfp2",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(fp1_group) & !is.na(fp2_group))
+
+set.seed(123)
+high_names_fp2 <- fpca_scores_fourier %>% filter(fp2_group == "highfp2") %>% slice_sample(n = 8) %>% pull(name)
+low_names_fp2 <- fpca_scores_fourier %>% filter(fp2_group == "lowfp2") %>% slice_sample(n = 8) %>% pull(name)
+names_top_bottom_fp2 <- c(high_names_fp2, low_names_fp2)
+
+wiggly_data_fp2 <- firsttrial %>%
+  filter(name %in% names_top_bottom_fp2, sensor.position == "FP2") %>%
+  left_join(fpca_scores_fourier %>% dplyr::select(name, fp2_group), by = "name")
+
+ggplot(wiggly_data_fp2, aes(x = time, y = sensor.value, colour = fp2_group)) +
+  geom_line(alpha = 0.8) +
+  facet_wrap(~name) +
+  labs(title = "EEG Curves by High vs Low FP2 Score",
+       x = "Time", y = "Sensor Value") +
+  theme_minimal()
+```
+
+### Smoothed FP1 and FP2 Curves by Metadata (Sampled Top/Bottom)
+```{r}
+sensor_list <- c("FP1", "FP2")
+for (sensor in sensor_list) {
+  eeg_data <- firsttrial %>% 
+    filter(sensor.position == sensor, name %in% names_top_bottom_fp2) %>% 
+    group_by(name) %>% 
+    arrange(sample.num) %>% 
+    ungroup()
+
+  eeg_matrix <- matrix(as.numeric(eeg_data$sensor.value), nrow = 256)
+  time <- seq(0, 1, length.out = 256)
+  basis <- create.fourier.basis(c(0, 1), nbasis = 7)
+  fdParObj <- fdPar(basis)
+  fd_obj <- smooth.basis(time, eeg_matrix, fdParObj)$fd
+
+  smoothed_matrix <- eval.fd(time, fd_obj)
+  smoothed_df <- as.data.frame(smoothed_matrix)
+  smoothed_df$time <- time
+  smoothed_long <- pivot_longer(smoothed_df, cols = -time, names_to = "curve_id", values_to = "value")
+
+  metadata <- eeg_data %>%
+    dplyr::select(name, subject.identifier, matching.condition) %>%
+    distinct() %>%
+    mutate(curve_id = paste0("V", row_number()))
+
+  smoothed_long <- smoothed_long %>%
+    left_join(metadata, by = "curve_id")
+
+  p1 <- ggplot(smoothed_long, aes(x = time, y = value, group = curve_id, colour = matching.condition)) +
+    geom_line(size = 1, alpha = 0.9) +
+    labs(title = paste("Smoothed", sensor, "EEG Curves by Matching Condition"),
+         x = "Time", y = "Smoothed EEG Value") +
+    theme_minimal()
+
+  p2 <- ggplot(smoothed_long, aes(x = time, y = value, group = curve_id, colour = subject.identifier)) +
+    geom_line(size = 1, alpha = 0.9) +
+    labs(title = paste("Smoothed", sensor, "EEG Curves by Subject Identifier"),
+         x = "Time", y = "Smoothed EEG Value") +
+    theme_minimal() +
+    theme(legend.position = "none")
+
+  print(p1)
+  print(p2)
+}
+```

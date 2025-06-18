@@ -1,0 +1,137 @@
+---
+title: "10_lasso"
+output: html_document
+date: "2025-03-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+$X\beta$
+
+```{r}
+# lasso_loop_all_sensors.R
+
+library(dplyr)
+library(tidyr)
+library(fda.usc)
+library(ggplot2)
+library(caret)
+library(glmnet)
+
+# Load data
+firsttrial <- readRDS("firsttrial_allsensors_data.rds")
+```
+
+
+
+```{r}
+# Define time grid
+n_timepoints <- 256
+time <- seq(0, 1, length.out = n_timepoints)
+
+
+# Define B-spline basis parameters for smoothing FPCA data
+norder <- 4
+nbasis <-  length(time) / 2 
+basis <- create.fourier.basis(rangeval = range(time), nbasis = nbasis)
+
+# Define the penalty and smoothing parameter
+Lfdobj <- 2    
+lambda <- 1e-2
+fdParObj <-  fdPar(basis, Lfdobj, lambda)
+
+# Smoothing helper function
+smooth_fd <- function(sensor_matrix, time, fdParObj) {
+  smooth.basis(time, sensor_matrix, fdParObj)$fd
+}
+```
+
+```{r}
+# Identify unique sensors
+sensor_list <- unique(firsttrial$sensor.position)
+
+all_scores <- NULL
+
+# Extract ordering data once for alignment 
+ordering_data <- firsttrial %>%
+  filter(time == 0) %>%
+  arrange(matching.condition, subject.identifier, name) %>%
+  dplyr::select(name, matching.condition, subject.identifier)
+
+for (sensor in sensor_list) {
+  
+  print(paste("Processing sensor:", sensor))
+  
+  # Extract sensor data
+  sensor_data <- firsttrial %>%
+    filter(sensor.position == sensor) %>%
+    arrange(matching.condition, subject.identifier, name, time)
+  
+  # Reshape sensor data to a matrix 
+  sensor_matrix <- matrix(as.numeric(sensor_data$sensor.value), nrow = n_timepoints)
+  
+  # Smooth data using B-spline basis
+  sensor_fd <- smooth.basis(time, sensor_matrix, fdParObj)$fd
+  
+  # FPCA 
+  res_fpca <- pca.fd(sensor_fd, nharm = nbasis)
+  nharms_95 <- which(cumsum(res_fpca$varprop) >= 0.95)[1]
+  
+  # FPCA again with optimal harmonics
+  res_fpca_final <- pca.fd(sensor_fd, nharm = nharms_95)
+  
+  plot(res_fpca_final)
+  title(main = paste("FPCA -", sensor))
+  
+  # Extract scores
+  scores_df <- data.frame(res_fpca_final$scores)
+  colnames(scores_df) <- paste0(sensor, ".", seq_len(ncol(scores_df)))
+  
+  # Append or combine scores
+  if (is.null(all_scores)) {
+    all_scores <- scores_df
+  } else {
+    all_scores <- cbind(all_scores, scores_df)
+  }
+}
+```
+
+```{r}
+# Combine ordering data with all sensor FPCA scores
+fpca_all_sensors <- cbind(ordering_data, all_scores)
+
+# Save the FPCA scores data
+saveRDS(fpca_all_sensors, "fpca_scores_all_sensors.rds")
+
+final_scores <- cbind(ordering_data, all_scores)
+```
+
+```{r}
+X <- final_scores %>% dplyr::select(-name, -matching.condition, -subject.identifier)
+
+# Outcome variable
+y <- as.factor(final_scores$subject.identifier)
+
+# Set up cross-validation
+set.seed(123)
+train_control <- trainControl(method = "cv", number = 10)
+
+# Fit LASSO model
+lasso_fit <- train(
+  x = X,
+  y = y,
+  method = "glmnet",
+  trControl = train_control,
+  tuneLength = 10
+)
+
+# View best model
+lasso_fit$bestTune
+plot(lasso_fit)
+
+# Predictive accuracy
+lasso_fit
+```
+

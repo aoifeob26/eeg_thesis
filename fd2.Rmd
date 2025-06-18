@@ -1,0 +1,125 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-03-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+## Load Required Libraries
+library(tidyverse)
+library(fda)
+library(nnet)
+library(caret)
+library(glmnet)
+```
+
+## Load Dataset
+```{r}
+firsttrial <- readRDS("firsttrial_data.rds")
+```
+
+## Define Functional PCA Parameters
+```{r}
+time <- seq(0, 1, length.out = 256)  # Define time grid
+norder <- 10
+nbasis <- length(time) + norder - 2
+basis <- create.bspline.basis(range(time), nbasis, norder, time)
+Lfdobj <- 4    # Penalty order
+lambda <- 1e-2 # Smoothing parameter
+fdParObj <- fdPar(fd(matrix(0, nbasis, 1), basis), Lfdobj, lambda)
+```
+
+## Function to Smooth Data
+```{r}
+smooth_fd <- function(sensor_matrix, time, fdParObj) {
+  smooth.basis(time, sensor_matrix, fdParObj)$fd
+}
+```
+
+## Extract & Process FP1 Data
+```{r}
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
+
+pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), nrow = 256, ncol = 48)
+pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
+res_fp1 <- pca.fd(pca_fd_fp1, nharm = nbasis)
+nharms_95 <- which(cumsum(res_fp1$varprop) >= 0.95)[1]
+res_fp1 <- pca.fd(pca_fd_fp1, nharm = nharms_95)
+plot(res_fp1)
+```
+
+## Process FP2 Data
+```{r}
+fp2_data <- firsttrial %>%
+  filter(sensor.position == "FP2") %>%
+  select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
+
+pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), nrow = 256, ncol = 48)
+pca_fd_fp2 <- smooth.basis(time, pca_matrix_fp2, fdParObj)$fd
+res_fp2 <- pca.fd(pca_fd_fp2, nharm = nharms_95)
+plot(res_fp2)
+```
+
+## Prepare Data for Modeling
+```{r}
+scores_fp1 <- data.frame(res_fp1$scores)
+colnames(scores_fp1) <- paste0("FP1.", 1:9)
+
+scores_fp2 <- data.frame(res_fp2$scores)
+colnames(scores_fp2) <- paste0("FP2.", 1:9)
+
+fp1_order <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  filter(time == 0) %>%
+  arrange(matching.condition, subject.identifier, name)
+
+fp1_order$condition_factor <- factor(fp1_order$subject.identifier)
+fp1modeldata <- cbind(fp1_order, scores_fp1, scores_fp2)
+```
+
+## Multinomial Logistic Regression Model (FP1 & FP2)
+```{r}
+model_combined <- nnet::multinom(subject.identifier ~ ., data = fp1modeldata)
+summary(model_combined)
+```
+
+## Train-Test Split and Model Evaluation
+```{r}
+set.seed(123)
+train_indices <- createDataPartition(fp1modeldata$subject.identifier, p = 0.75, list = FALSE)
+train_data <- fp1modeldata[train_indices, ]
+test_data <- fp1modeldata[-train_indices, ]
+
+train_model_fp1 <- nnet:: multinom(condition_factor ~ FP1.1 + FP1.2 + FP1.3 + FP1.4 + FP1.5, data = train_data)
+predictions <- predict(train_model_fp1, newdata = test_data)
+
+confusion_matrix <- table(predictions, test_data$condition_factor)
+accuracy <- sum(predictions == test_data$condition_factor) / nrow(test_data)
+print(confusion_matrix)
+print(accuracy)
+```
+
+## Lasso Regularization Model
+```{r}
+predictors <- as.matrix(fp1modeldata[, c(paste0("FP1.", 1:9), paste0("FP2.", 1:9))])
+response <- as.factor(fp1modeldata$subject.identifier)
+
+lasso_model <- cv.glmnet(predictors, response, alpha = 1, family = "multinomial", type.measure = "class")
+print(paste("Best lambda: ", lasso_model$lambda.min))
+predictions_lasso <- predict(lasso_model, newx = as.matrix(test_data[, c(paste0("FP1.", 1:9), paste0("FP2.", 1:9))]), s = "lambda.min", type = "class")
+
+confusion_matrix_lasso <- table(predictions_lasso, test_data$condition_factor)
+accuracy_lasso <- sum(predictions_lasso == test_data$condition_factor) / nrow(test_data)
+print(confusion_matrix_lasso)
+print(accuracy_lasso)
+```
+

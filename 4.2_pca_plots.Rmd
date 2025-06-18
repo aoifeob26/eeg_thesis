@@ -1,0 +1,86 @@
+---
+title: '4.2_pca_plots'
+output: html_document
+date: "2025-03-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(fda)
+library(dplyr)
+library(ggplot2)
+``` 
+
+```{r}
+firsttrial <- readRDS("firsttrial_data.rds")
+time <- seq(0, 1, length.out = 256)
+
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  arrange(matching.condition, subject.identifier, name, time)
+``` 
+
+```{r}
+run_fpca_comparison <- function(data, basis_type = "bspline", nbasis = 20, lambda = 1e-2, nharm = 10) {
+  if (basis_type == "bspline") {
+    basis <- create.bspline.basis(rangeval = c(0, 1), nbasis = nbasis)
+  } else if (basis_type == "fourier") {
+    basis <- create.fourier.basis(rangeval = c(0, 1), nbasis = nbasis)
+  }
+
+  fdParObj <- fdPar(basis, Lfdobj = 2, lambda = lambda)
+  mat <- matrix(as.numeric(data$sensor.value), nrow = 256)
+  smoothed_fd <- smooth.basis(time, mat, fdParObj)$fd
+  pca_result <- pca.fd(smoothed_fd, nharm = nharm)
+
+  list(
+    basis_type = basis_type,
+    nbasis = nbasis,
+    lambda = lambda,
+    nharm = nharm,
+    fd = smoothed_fd,
+    pca = pca_result
+  )
+}
+``` 
+
+```{r}
+params_grid <- expand.grid(
+  basis_type = c("bspline", "fourier"),
+  nbasis = c(20, 40, 128, 256),
+  lambda = c(1e-1, 1e-2, 1e-4),
+  nharm = 10
+)
+
+results_list <- list()
+
+for (i in 1:nrow(params_grid)) {
+  param <- params_grid[i, ]
+  res <- run_fpca_comparison(
+    data = fp1_data,
+    basis_type = param$basis_type,
+    nbasis = param$nbasis,
+    lambda = param$lambda,
+    nharm = param$nharm
+  )
+  results_list[[i]] <- res
+}
+``` 
+
+```{r}
+# Plot each combination of smoothing parameters
+for (i in seq_along(results_list)) {
+  res <- results_list[[i]]
+  plot(res$fd, main = paste0(res$basis_type,
+                             " nbasis: ", res$nbasis,
+                             " lambda: ", res$lambda))
+}
+``` 
+
+
+Fourier basis with moderate smoothing (nbasis = 40, lambda = 0.01) provided a balance between flexibility and generalisation. It produced more structured FPCA scores, reflected in both improved classification accuracy and interpretable clusters.

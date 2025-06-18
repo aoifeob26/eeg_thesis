@@ -1,0 +1,209 @@
+---
+title: "8_nharm_comparison"
+output: html_document
+date: "2025-03-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(fda)
+library(fda.usc)
+library(dplyr)
+library(caret)
+library(nnet)
+library(randomForest)
+
+```
+
+
+```{r}
+# Load dataset
+firsttrial <- readRDS("firsttrial_data.rds")
+
+```
+
+
+```{r}
+time <- seq(0, 1, length.out = 256)
+```
+
+
+```{r}
+run_fpca <- function(data, basis_type, nharm) {
+  if (basis_type == "bspline") {
+    basis <- create.bspline.basis(rangeval = range(time), nbasis = length(time) / 2)
+  } else if (basis_type == "fourier") {
+    basis <- create.fourier.basis(rangeval = range(time), nbasis = length(time) / 2)
+  }
+
+  fdParObj <- fdPar(basis, Lfdobj = 2, lambda = 1e-2)
+
+  # FP1 data
+  fp1_data <- data %>%
+    filter(sensor.position == "FP1") %>%
+    arrange(matching.condition, subject.identifier, name, time)
+  pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), 256)
+  pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
+
+  # FP2 data
+  fp2_data <- data %>%
+    filter(sensor.position == "FP2") %>%
+    arrange(matching.condition, subject.identifier, name, time)
+  pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), 256)
+  pca_fd_fp2 <- smooth.basis(time, pca_matrix_fp2, fdParObj)$fd
+
+  res_fp1 <- pca.fd(pca_fd_fp1, nharm = nharm)
+  res_fp2 <- pca.fd(pca_fd_fp2, nharm = nharm)
+
+  scores_fp1 <- as.data.frame(res_fp1$scores)
+  colnames(scores_fp1) <- paste0("FP1_", 1:ncol(scores_fp1))
+
+  scores_fp2 <- as.data.frame(res_fp2$scores)
+  colnames(scores_fp2) <- paste0("FP2_", 1:ncol(scores_fp2))
+
+  combined_scores <- cbind(fp1_data %>% filter(time == 0) %>% dplyr::select(matching.condition, subject.identifier), scores_fp1, scores_fp2)
+
+  combined_scores$matching.condition <- as.factor(combined_scores$matching.condition)
+  combined_scores$subject.identifier <- as.factor(combined_scores$subject.identifier)
+
+  return(combined_scores)
+}
+```
+
+
+```{r}
+fit_and_evaluate <- function(scores_data, target_var) {
+  set.seed(123)
+  train_idx <- createDataPartition(scores_data[[target_var]], p = 0.75, list = FALSE)
+  train <- scores_data[train_idx, ]
+  test <- scores_data[-train_idx, ]
+
+  predictors <- names(scores_data)[grepl("FP[12]_", names(scores_data))]
+
+  multinom_model <- multinom(as.formula(paste(target_var, "~", paste(predictors, collapse = "+"))), data = train, trace = FALSE)
+  multinom_acc <- mean(predict(multinom_model, test) == test[[target_var]])
+
+  rf_model <- randomForest(as.formula(paste(target_var, "~", paste(predictors, collapse = "+"))), data = train)
+  rf_acc <- mean(predict(rf_model, test) == test[[target_var]])
+
+  return(c(Multinomial = multinom_acc, RandomForest = rf_acc))
+}
+```
+
+```{r}
+nharm_values <- 2:20
+results <- data.frame()
+
+for (basis in c("bspline", "fourier")) {
+  for (nharm in nharm_values) {
+    scores <- run_fpca(firsttrial, basis, nharm)
+
+    acc_match <- fit_and_evaluate(scores, "matching.condition")
+    acc_subj <- fit_and_evaluate(scores, "subject.identifier")
+
+   results <- rbind(results, data.frame(
+    Basis = basis,
+    NHarm = nharm,
+    Matching_Multinom = as.numeric(acc_match["Multinomial"]),
+    Matching_RF = as.numeric(acc_match["RandomForest"]),
+    Subject_Multinom = as.numeric(acc_subj["Multinomial"]),
+    Subject_RF = as.numeric(acc_subj["RandomForest"])
+  ))
+
+
+    print(paste("Completed", basis, "with", nharm, "harmonics"))
+  }
+}
+
+saveRDS(results, "nharm_tuning_results.rds")
+
+print(results)
+```
+
+
+
+```{r}
+ggplot(results, aes(x = NHarm, y = Matching_RF, colour = Basis)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "RF Accuracy for Matching Condition by Basis Type",
+       x = "Number of Components", y = "Accuracy") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal()
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Plot for Matching_Multinom accuracy over NHarm
+ggplot(results, aes(x = NHarm, y = Matching_Multinom, colour = Basis)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Multinomial Accuracy for Matching Condition",
+    subtitle = "Fourier vs B-spline across Components",
+    x = "Number of Components (NHarm)",
+    y = "Accuracy"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+library(tidyr)
+
+results_long <- results %>%
+  pivot_longer(cols = c(Matching_RF, Subject_RF),
+               names_to = "Task", values_to = "Accuracy")
+
+ggplot(results_long, aes(x = NHarm, y = Accuracy, colour = Basis)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~Task, ncol = 1) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Random Forest Accuracy by Basis Type",
+    x = "Number of Components (NHarm)",
+    y = "Accuracy"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
+Matching Condition Prediction:
+
+B-spline achieved the highest accuracy (58.3%) at nharm = 10 using multinomial regression.
+
+Fourier achieved the highest accuracy (75%) at nharm = 7 using Random Forest.
+
+The Fourier basis with Random Forest performed best for predicting the matching condition.
+
+Subject Identifier Prediction:
+
+Overall accuracies are lower compared to matching condition.
+
+The Fourier basis again performed better (66.7%) at nharm = 14 and nharm = 16 using Random Forest.
+
+B-spline achieved a maximum of 41.7% at multiple nharm values, also using Random Forest.
+
+Best Performing Models:
+Matching Condition:
+Random Forest models consistently outperform multinomial models, especially when using Fourier basis.
+
+Optimal nharm for matching condition prediction with Fourier and Random Forest is clearly at 7 harmonics.
+
+Subject Identifier:
+Random Forest models outperform multinomial models here as well.
+
+Optimal nharm for subject identifier prediction is at 14 or 16 harmonics using Fourier.

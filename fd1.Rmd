@@ -1,0 +1,79 @@
+---
+title: "Fourier"
+output: html_document
+date: "2025-03-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(fda)
+library(caret)
+library(glmnet)
+library(nnet)
+library(tidyr)
+library(dplyr)
+
+# Load Data
+firsttrial <- readRDS("firsttrial_data.rds")
+
+nbasis <- 21  # Adjust based on frequency components needed
+basis_fd <- create.fourier.basis(rangeval = c(1, 256), nbasis = nbasis)
+
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  dplyr::select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
+
+fp2_data <- firsttrial %>%
+  filter(sensor.position == "FP2") %>%
+  dplyr::select(name, matching.condition, subject.identifier, time, sensor.value) %>%
+  arrange(matching.condition, subject.identifier, name, time)
+
+pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), nrow = 256, ncol = 48)
+pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
+
+pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), nrow = 256, ncol = 48)
+pca_fd_fp2 <- smooth.basis(time, pca_matrix_fp2, fdParObj)$fd
+
+
+```
+```{r}
+resfp1 <- pca.fd(pca_fd_fp1, nharm = nbasis)
+resfp2 <- pca.fd(pca_fd_fp2, nharm = nbasis)
+
+# Retain components explaining 95% variance
+nharms_95 <- which(cumsum(resfp1$varprop) >= 0.95)[1]
+
+# Re-run FPCA with optimal number of components
+resfp1 <- pca.fd(pca_fd_fp1, nharm = nharms_95)
+resfp2 <- pca.fd(pca_fd_fp2, nharm = nharms_95)
+
+# Extract FPCA scores
+scores_fp1 <- data.frame(resfp1$scores)
+scores_fp2 <- data.frame(resfp2$scores)
+colnames(scores_fp1) <- paste0("FP1.", 1:nharms_95)
+colnames(scores_fp2) <- paste0("FP2.", 1:nharms_95)
+
+
+```
+
+```{r}
+fpca_scores_df <- cbind(scores_fp1, scores_fp2)
+fpca_scores_df$Alcoholic <- firsttrial$Alcoholic  # Assuming 'Alcoholism' column exists
+
+set.seed(42)
+trainIndex <- createDataPartition(fpca_scores_df$Alcoholic, p = 0.8, list = FALSE)
+trainData <- fpca_scores_df[trainIndex, ]
+testData <- fpca_scores_df[-trainIndex, ]
+
+logit_model <- multinom(Alcoholic ~ ., data = trainData)
+
+test_pred <- predict(logit_model, testData)
+accuracy <- mean(test_pred == testData$Alcoholic)
+print(paste("Prediction Accuracy:", round(accuracy, 4)))
+
+```
+

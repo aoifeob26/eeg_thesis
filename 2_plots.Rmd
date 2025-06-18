@@ -315,3 +315,44 @@ legend("topright", legend = c("Alcoholics", "Controls"),
        col = c("red", "blue"), lty = c(1, 2), lwd = 2)
 
 ```
+
+
+```{r}
+# Plot a single EEG curve (FP1) from one subject
+example_subject <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  distinct(name) %>%
+  slice(1) %>% pull(name)
+
+eeg_example <- firsttrial %>%
+  filter(name == example_subject, sensor.position == "FP1")
+
+ggplot(eeg_example, aes(x = time, y = sensor.value)) +
+  geom_line(colour = "steelblue", size = 1) +
+  labs(title = paste("EEG Curve for", example_subject, "(FP1)"),
+       x = "Time (seconds)", y = "Sensor Value") +
+  theme_minimal()
+
+```
+
+```{r}
+# Create a dummy tibble if you don't have real results yet
+model_results <- tibble::tibble(
+  Model = c("Fourier + RF", "Fourier + Lasso", 
+            "B-spline + RF", "B-spline + Lasso"),
+  Accuracy = c(0.88, 0.83, 0.81, 0.78)  # Replace with your real scores
+)
+
+# Bar plot of classification accuracy
+ggplot(model_results, aes(x = Model, y = Accuracy, fill = Model)) +
+  geom_col(width = 0.6) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
+  labs(title = "Model Accuracy by Method & Basis",
+       x = "Model",
+       y = "Accuracy") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 30, hjust = 1))
+
+```
+

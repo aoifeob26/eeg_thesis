@@ -1,0 +1,145 @@
+---
+title: "11_clustering"
+output: html_document
+date: "2025-03-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Load libraries
+library(fda)
+library(dplyr)
+
+# Load your data
+firsttrial <- readRDS("firsttrial_data.rds")
+
+# Set up time grid and basis
+time <- seq(0, 1, length.out = 256)
+nbasis <- length(time) / 2
+basis <- create.bspline.basis(rangeval = range(time), nbasis = nbasis)
+fdParObj <- fdPar(basis, Lfdobj = 2, lambda = 1e-2)
+
+### === FP1 ===
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  arrange(matching.condition, subject.identifier, name, time)
+
+pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), nrow = 256)
+pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
+
+fpca_fp1 <- pca.fd(pca_fd_fp1, nharm = 30)
+keep_fp1 <- which(fpca_fp1$varprop > 0.01)
+nharm_fp1 <- min(length(keep_fp1), 10)
+
+### === FP2 ===
+fp2_data <- firsttrial %>%
+  filter(sensor.position == "FP2") %>%
+  arrange(matching.condition, subject.identifier, name, time)
+
+pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), nrow = 256)
+pca_fd_fp2 <- smooth.basis(time, pca_matrix_fp2, fdParObj)$fd
+
+fpca_fp2 <- pca.fd(pca_fd_fp2, nharm = 30)
+keep_fp2 <- which(fpca_fp2$varprop > 0.01)
+nharm_fp2 <- min(length(keep_fp2), 10)
+
+### === Save both ===
+saveRDS(
+  list(
+    bspline_nharm_fp1 = nharm_fp1,
+    bspline_nharm_fp2 = nharm_fp2
+  ),
+  "optimal_nharm_unsupervised.rds"
+)
+print(paste("Saved optimal nharm for clustering:"))
+print(paste("- FP1:", nharm_fp1))
+print(paste("- FP2:", nharm_fp2))
+
+```
+
+```{r}
+# Load optimal harmonics
+unsup_nharm <- readRDS("optimal_nharm_unsupervised.rds")
+
+# Use FP1 and FP2 harmonics (both = 5)
+resfp1 <- pca.fd(pca_fd_fp1, nharm = unsup_nharm$bspline_nharm_fp1)
+resfp2 <- pca.fd(pca_fd_fp2, nharm = unsup_nharm$bspline_nharm_fp2)
+
+# Extract scores
+scores_fp1 <- as.data.frame(resfp1$scores)
+colnames(scores_fp1) <- paste0("FP1_", 1:ncol(scores_fp1))
+
+scores_fp2 <- as.data.frame(resfp2$scores)
+colnames(scores_fp2) <- paste0("FP2_", 1:ncol(scores_fp2))
+
+# Combine for clustering
+combined_scores <- cbind(scores_fp1, scores_fp2)
+
+```
+
+
+```{r}
+# Set seed for reproducibility
+set.seed(42)
+
+k <- 3
+
+# Run k-means
+km_res <- kmeans(combined_scores, centers = k, nstart = 25)
+
+# Add cluster labels back to the data
+clustered_data <- cbind(combined_scores, cluster = factor(km_res$cluster))
+
+```
+
+
+```{r}
+# Join with metadata to explore alignment (time = 0 rows only)
+meta <- firsttrial %>%
+  filter(sensor.position == "FP1", time == 0) %>%
+  dplyr::select(name, matching.condition, subject.identifier)
+
+final_clusters <- cbind(meta, clustered_data)
+
+saveRDS(final_clusters,"final_clusters.rds")
+
+```
+
+
+```{r}
+library(ggplot2)
+
+ggplot(final_clusters, aes(x = FP1_1, y = FP2_1, colour = cluster)) +
+  geom_point(size = 3) +
+  labs(title = "K-means Clustering on FP1 + FP2 Scores",
+       subtitle = "Coloured by cluster label",
+       x = "FP1 - PC1", y = "FP2 - PC1") +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot(final_clusters, aes(x = FP1_1, y = FP2_1, colour = matching.condition)) +
+  geom_point(size = 3) +
+  facet_wrap(~ cluster) +
+  labs(title = "Clusters split by Matching Condition",
+       x = "FP1 - PC1", y = "FP2 - PC1") +
+  theme_minimal()
+
+```
+
+```{r}
+final_clusters$group <- ifelse(grepl("a", final_clusters$subject.identifier), "Alcoholic", "Control")
+
+ggplot(final_clusters, aes(x = FP1_1, y = FP2_1, colour = group)) +
+  geom_point(size = 3) +
+  facet_wrap(~ cluster) +
+  labs(title = "Clusters coloured by Alcoholism Status") +
+  theme_minimal()
+
+```
+

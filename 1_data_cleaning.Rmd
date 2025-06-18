@@ -127,7 +127,6 @@ firsttrial %>% filter(sensor.position  %in% c("FP1", "FP2"),
 
 
 
-
 ```
  
  

@@ -1,0 +1,379 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-04-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Step 1: Set number of FPCA components
+nharm <- 20  # You can change this to test effect on performance
+
+# FP1 scores
+res_fp1 <- pca.fd(fd_fp1, nharm = nharm)
+scores_fp1 <- as.data.frame(res_fp1$scores)
+colnames(scores_fp1) <- paste0("FP1_", 1:nharm)
+
+# FP2 scores
+res_fp2 <- pca.fd(fd_fp2, nharm = nharm)
+scores_fp2 <- as.data.frame(res_fp2$scores)
+colnames(scores_fp2) <- paste0("FP2_", 1:nharm)
+
+```
+
+```{r}
+# Step 2: Attach metadata
+meta <- fp1_data %>% filter(time == 0) %>%
+  dplyr::select(matching.condition, subject.identifier)
+
+fpca_data <- cbind(meta, scores_fp1, scores_fp2)
+fpca_data$subject.identifier <- as.factor(fpca_data$subject.identifier)
+
+```
+
+```{r}
+# Step 3: Keep only the subject group and FPCA features
+fp_features <- grep("^FP[12]_", names(fpca_data), value = TRUE)
+
+model_data <- fpca_data %>%
+  dplyr::select(subject.identifier, all_of(fp_features))
+
+# Check dimensions and names
+print(dim(model_data))           # Should be 48 x 41
+print(colnames(model_data)[1:6]) # Spot-check
+
+```
+```{r}
+# Step 4: Split data
+set.seed(123)
+train_idx <- createDataPartition(model_data$subject.identifier, p = 0.7, list = FALSE)
+train_data <- model_data[train_idx, ]
+test_data  <- model_data[-train_idx, ]
+
+# Create modeling formula using all FP features
+formula <- as.formula(paste("subject.identifier ~", paste(fp_features, collapse = " + ")))
+
+# Check how many predictors are being used
+print(length(fp_features))      # Should be 40
+print(formula)                  # Check that formula looks good
+
+```
+```{r}
+# Step 5: Fit Random Forest
+library(randomForest)
+library(caret)
+
+rf_model <- randomForest(formula, data = train_data, importance = TRUE)
+rf_pred  <- predict(rf_model, newdata = test_data)
+
+# Evaluate performance
+rf_cm <- confusionMatrix(rf_pred, test_data$subject.identifier)
+print(rf_cm)
+
+# Optional: Show just the accuracy and Kappa
+cat("Random Forest Accuracy:", round(rf_cm$overall["Accuracy"] * 100, 2), "%\n")
+cat("Kappa:", round(rf_cm$overall["Kappa"], 2), "\n")
+
+# Variable importance plot
+varImpPlot(rf_model)
+
+```
+```{r}
+library(caret)
+
+control <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+rf_tuned <- train(
+  formula,
+  data = train_data,
+  method = "rf",
+  trControl = control,
+  tuneLength = 10  # Try 10 different mtry values
+)
+
+# Predict + Evaluate
+rf_pred_tuned <- predict(rf_tuned, newdata = test_data)
+confusionMatrix(rf_pred_tuned, test_data$subject.identifier)
+
+# Plot tuning results
+plot(rf_tuned)
+
+# Variable importance
+library(vip)
+vip(rf_tuned$finalModel, num_features = 10)
+
+```
+```{r}
+top_features <- c(paste0("FP1_", 1:5), paste0("FP2_", 1:5))
+
+formula_reduced <- as.formula(paste("subject.identifier ~", paste(top_features, collapse = " + ")))
+
+rf_reduced <- randomForest(formula_reduced, data = train_data, importance = TRUE)
+rf_pred_reduced <- predict(rf_reduced, newdata = test_data)
+confusionMatrix(rf_pred_reduced, test_data$subject.identifier)
+
+varImpPlot(rf_reduced)
+
+```
+```{r}
+rf_balanced <- randomForest(
+  formula,
+  data = train_data,
+  importance = TRUE,
+  classwt = c(a = 0.5, c = 0.5)
+)
+
+rf_pred_balanced <- predict(rf_balanced, newdata = test_data)
+confusionMatrix(rf_pred_balanced, test_data$subject.identifier)
+
+```
+```{r}
+rf_big <- randomForest(
+  formula,
+  data = train_data,
+  ntree = 2000,
+  importance = TRUE
+)
+
+rf_pred_big <- predict(rf_big, newdata = test_data)
+confusionMatrix(rf_pred_big, test_data$subject.identifier)
+
+```
+```{r}
+firsttrial <- readRDS(firsttrial, file = "firsttrial_allsensors_data.rds")
+
+print(firsttrial)
+```
+```{r}
+# F3
+f3_data <- firsttrial %>%
+  filter(sensor.position == "F3") %>%
+  arrange(matching.condition, subject.identifier, name, time)
+mat_f3 <- matrix(as.numeric(f3_data$sensor.value), nrow = 256)
+fd_f3 <- smooth.basis(time, mat_f3, fdParObj)$fd
+res_f3 <- pca.fd(fd_f3, nharm = nharm)
+scores_f3 <- as.data.frame(res_f3$scores)
+colnames(scores_f3) <- paste0("F3_", 1:nharm)
+
+# F4
+f4_data <- firsttrial %>%
+  filter(sensor.position == "F4") %>%
+  arrange(matching.condition, subject.identifier, name, time)
+mat_f4 <- matrix(as.numeric(f4_data$sensor.value), nrow = 256)
+fd_f4 <- smooth.basis(time, mat_f4, fdParObj)$fd
+res_f4 <- pca.fd(fd_f4, nharm = nharm)
+scores_f4 <- as.data.frame(res_f4$scores)
+colnames(scores_f4) <- paste0("F4_", 1:nharm)
+
+```
+
+```{r}
+# Combine metadata + scores
+meta <- f3_data %>% filter(time == 0) %>%
+  dplyr::select(matching.condition, subject.identifier)
+
+fpca_data <- cbind(meta, scores_fp1, scores_fp2, scores_f3, scores_f4)
+fpca_data$subject.identifier <- as.factor(fpca_data$subject.identifier)
+
+```
+```{r}
+# New: FP1, FP2, F3, F4 features
+fp_features <- grep("^(FP[12]|F3|F4)_", names(fpca_data), value = TRUE)
+
+```
+
+```{r}
+length(fp_features)  # Should be 80 if nharm = 20 (4 electrodes × 20 scores)
+
+```
+```{r}
+# Split data again
+set.seed(123)
+train_idx <- createDataPartition(fpca_data$subject.identifier, p = 0.7, list = FALSE)
+train_data <- fpca_data[train_idx, ]
+test_data <- fpca_data[-train_idx, ]
+
+# Update modeling dataset
+model_data <- fpca_data %>%
+  dplyr::select(subject.identifier, all_of(fp_features))
+
+# Rebuild formula
+formula <- as.formula(paste("subject.identifier ~", paste(fp_features, collapse = " + ")))
+
+# Run Random Forest
+rf_model <- randomForest(formula, data = train_data, importance = TRUE)
+rf_pred <- predict(rf_model, newdata = test_data)
+confusionMatrix(rf_pred, test_data$subject.identifier)
+
+```
+```{r}
+# Features without F3/F4
+fp_features_base <- grep("^(FP1|FP2)_", names(fpca_data), value = TRUE)
+
+model_data_base <- fpca_data %>%
+  dplyr::select(subject.identifier, all_of(fp_features_base))
+
+formula_base <- as.formula(paste("subject.identifier ~", paste(fp_features_base, collapse = " + ")))
+
+rf_base <- randomForest(formula_base, data = train_data, importance = TRUE)
+pred_base <- predict(rf_base, newdata = test_data)
+
+cat("Baseline Accuracy (FP1+FP2 only):", round(mean(pred_base == test_data$subject.identifier) * 100, 2), "%\n")
+
+```
+```{r}
+library(caret)
+
+# Do regular PCA on the 80 FPCA features
+pca_model <- preProcess(model_data[, -1], method = "pca", pcaComp = 10)
+pca_scores <- predict(pca_model, model_data[, -1])
+model_data_pca <- cbind(subject.identifier = model_data$subject.identifier, pca_scores)
+
+# Train/test split
+train_idx <- createDataPartition(model_data_pca$subject.identifier, p = 0.7, list = FALSE)
+train_pca <- model_data_pca[train_idx, ]
+test_pca  <- model_data_pca[-train_idx, ]
+
+# Train model
+rf_pca <- randomForest(subject.identifier ~ ., data = train_pca)
+pred_pca <- predict(rf_pca, newdata = test_pca)
+confusionMatrix(pred_pca, test_pca$subject.identifier)
+
+```
+```{r}
+rf_tuned <- train(
+  formula,
+  data = train_data,
+  method = "rf",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneLength = 10
+)
+# View tuning results
+print(rf_tuned)           # shows best mtry and accuracy
+plot(rf_tuned)            # visual tuning curve
+rf_tuned$bestTune         # best mtry value
+
+```
+```{r}
+rf_pred_tuned <- predict(rf_tuned, newdata = test_data)
+confusionMatrix(rf_pred_tuned, test_data$subject.identifier)
+
+```
+```{r}
+trainControl(method = "repeatedcv", number = 5, repeats = 3)
+
+```
+
+```{r}
+rf_pred_tuned <- predict(rf_tuned, newdata = test_data)
+confusionMatrix(rf_pred_tuned, test_data$subject.identifier)
+
+```
+```{r}
+barplot(
+  c(CV_Accuracy = 0.756, Test_Accuracy = 0.286),
+  beside = TRUE,
+  col = c("skyblue", "salmon"),
+  ylim = c(0,1),
+  main = "Model Accuracy: CV vs Test",
+  ylab = "Accuracy"
+)
+
+```
+
+```{r}
+glm_model <- train(
+  formula,
+  data = train_data,
+  method = "glm",
+  trControl = trainControl(method = "cv", number = 5)
+)
+
+pred_glm <- predict(glm_model, newdata = test_data)
+confusionMatrix(pred_glm, test_data$subject.identifier)
+
+```
+```{r}
+# Train basic RF on full feature set
+rf_temp <- randomForest(formula, data = train_data, importance = TRUE)
+importance_df <- as.data.frame(importance(rf_temp))
+top_features <- rownames(importance_df)[order(importance_df$MeanDecreaseGini, decreasing = TRUE)][1:10]  # top 10
+
+# Reduced formula
+formula_reduced <- as.formula(paste("subject.identifier ~", paste(top_features, collapse = " + ")))
+
+```
+```{r}
+rf_tuned_reduced <- train(
+  formula_reduced,
+  data = train_data,
+  method = "rf",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneLength = 10
+)
+rf_pred_reduced <- predict(rf_tuned_reduced, newdata = test_data)
+confusionMatrix(rf_pred_reduced, test_data$subject.identifier)
+
+```
+```{r}
+# STEP 1: Train a random forest with full features to get importance
+rf_temp <- randomForest(formula, data = train_data, importance = TRUE)
+
+# STEP 2: Select top 10 most important predictors
+importance_df <- as.data.frame(importance(rf_temp))
+top_features <- rownames(importance_df)[order(importance_df$MeanDecreaseGini, decreasing = TRUE)][1:10]
+
+# STEP 3: Update formula with only the top features
+formula_reduced <- as.formula(paste("subject.identifier ~", paste(top_features, collapse = " + ")))
+
+# STEP 4: Tune the model again, now with fewer predictors
+rf_tuned_reduced <- train(
+  formula_reduced,
+  data = train_data,
+  method = "rf",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneLength = 10
+)
+
+# STEP 5: Evaluate performance
+rf_pred_reduced <- predict(rf_tuned_reduced, newdata = test_data)
+confusionMatrix(rf_pred_reduced, test_data$subject.identifier)
+
+# Optional: Check top 10 features again
+print(top_features)
+
+```
+```{r}
+ctrl_loocv <- trainControl(method = "LOOCV")
+
+rf_loocv <- train(
+  formula_reduced,
+  data = model_data,   # use full data here
+  method = "rf",
+  trControl = ctrl_loocv,
+  tuneLength = 10
+)
+
+print(rf_loocv)
+
+```
+```{r}
+library(glmnet)
+
+x <- model.matrix(formula_reduced, data = train_data)[, -1]
+y <- train_data$subject.identifier
+
+cv_glm <- cv.glmnet(x, y, family = "binomial", alpha = 0)  # alpha = 0 for ridge
+best_lambda <- cv_glm$lambda.min
+
+# Predict
+x_test <- model.matrix(formula_reduced, data = test_data)[, -1]
+preds <- predict(cv_glm, s = best_lambda, newx = x_test, type = "class")
+
+confusionMatrix(as.factor(preds), test_data$subject.identifier)
+
+```
+

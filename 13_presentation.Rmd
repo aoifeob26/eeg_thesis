@@ -1,0 +1,306 @@
+---
+title: "Functional Data Analysis of EEG Data Comparing Alcoholics & Controls"
+author: "Aoife O'Brien & Alannah Blacoe"
+output:
+  revealjs::revealjs_presentation:
+    self_contained: true
+    theme: white
+    transition: fade
+    incremental: true
+    css: style.css
+
+    
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(scales)
+library(patchwork)
+library(fdapace)
+library(fda)
+library(tibble)
+
+firsttrial <- readRDS("firsttrial_data.rds")     
+fp1_s2nomatch_control <- readRDS("fp1_control_fd.rds")
+fp1_s2nomatch_alcohol <- readRDS("fp1_alcohol_fd.rds")
+t_test_fp1_s2nomatch <- tperm.fd(fp1_s2nomatch_control, fp1_s2nomatch_alcohol)
+fpca_scores_fourier <- readRDS("fpca_scores_fourier.rds")  
+final_clusters <- readRDS("final_clusters.rds")    
+res.fp1 <- readRDS("res.fp1.rds")                  
+res.fp2 <- readRDS("res.fp2.rds") 
+results <- readRDS("nharm_tuning_results.rds")
+```
+
+## Objective
+
+* Investigate EEG correlates of genetic predisposition to alcoholism
+
+* Use Functional Data Analysis (FDA) to compare alcoholic vs control EEG patterns
+
+* Explore clustering and prediction of group membership from EEG curves
+
+---
+
+## Background & Motivation
+
+* EEG produces hundreds of measurements per second.
+* Traditional stats simplify this to averages — losing shape.
+* FDA treats EEG as **curves over time**.
+* FPCA extracts dominant patterns from these curves.
+
+---
+
+## The Dataset
+
+* **Subjects:** Alcoholic & Control groups  
+* **Electrodes:** 64 scalp sites (256 Hz sampling)  
+* **Focus:** FP1 and FP2 frontal electrodes  
+* **Stimuli:**  
+  - S1 Object (single image)  
+  - S2 Match (same second image)  
+  - S2 Non-match (different second image)
+
+---
+
+## Research Questions
+
+1. Do alcoholic and control participants show different EEG response patterns?  
+2. How do visual stimuli impact EEG curves?  
+3. Can we group participants based on EEG shape using clustering?  
+4. Can we predict group membership from EEG data?
+
+---
+
+## Why Functional Data?
+
+* EEG curves are not points — they're shapes.
+
+* FDA handles entire time-dependent signal
+
+* FPCA captures shared shapes across participants
+
+
+## Raw EEG Curve from FP1
+```{r, echo=FALSE, fig.align='center', out.width='70%'}
+example_subject <- firsttrial %>% filter(sensor.position == "FP1") %>% distinct(name) %>% slice(1) %>% pull(name)
+eeg_example <- firsttrial %>% filter(name == example_subject, sensor.position == "FP1")
+ggplot(eeg_example, aes(x = time, y = sensor.value)) +
+  geom_line(colour = "#00BFC4") +
+  labs(title = paste("EEG Curve for", example_subject), x = "Time (s)", y = "Sensor Value") +
+  theme_minimal()
+```
+
+
+## Permutation Test 
+
+
+- A **non-parametric test** used to compare groups  
+- Shuffles group labels (e.g., alcoholic vs control) many times  
+- Builds a **null distribution** of test statistics  
+- Compares actual observed stat to that distribution  
+- No assumptions about normality — perfect for complex data like EEG
+
+---
+
+## FP1 Electrode (S2 Non-match)
+```{r, echo=FALSE, fig.align='center'}
+t_test_fp1_s2nomatch <- tperm.fd(fp1_s2nomatch_control, fp1_s2nomatch_alcohol)
+
+```
+
+
+---
+
+## FPCA Model
+
+\[
+X(t) = \mu(t) + \sum_{k=1}^{K} \xi_k \phi_k(t)
+\]
+
+* \(\mu(t)\): mean EEG curve  
+* \(\phi_k(t)\): principal components (shapes)  
+* \(\xi_k\): subject-level scores
+
+---
+
+## FPCA Summary – FP1
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=6}
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(patchwork)
+
+# Scree Plot
+varprop <- res.fp1$varprop
+scree_df <- tibble(PC = paste0("PC", seq_along(varprop)), Variance = varprop)
+p1 <- scree_df %>%
+  slice(1:10) %>%
+  ggplot(aes(x = PC, y = Variance)) +
+  geom_col(fill = "#00BFC4") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Scree Plot (FP1)", x = "Component", y = "Variance Explained") +
+  theme_minimal()
+
+# Mean EEG Curve
+times <- seq(0, 1, length.out = 256)
+mean_vals <- as.vector(eval.fd(times, res.fp1$meanfd))
+mean_df <- tibble(time = times, amplitude = mean_vals)
+p2 <- ggplot(mean_df, aes(x = time, y = amplitude)) +
+  geom_line(color = "black") +
+  labs(title = "Mean EEG Curve (FP1)", x = "Time (s)", y = "Amplitude") +
+  theme_minimal()
+
+# Components 1–3
+harmonics_df <- as_tibble(eval.fd(times, res.fp1$harmonics[1:3]))
+names(harmonics_df) <- c("Component 1", "Component 2", "Component 3")
+harmonics_df$time <- times
+harmonics_long <- pivot_longer(harmonics_df, cols = starts_with("Component"),
+                                names_to = "Component", values_to = "Amplitude")
+
+p3 <- ggplot(harmonics_long, aes(x = time, y = Amplitude, colour = Component, linetype = Component)) +
+  geom_line(size = 1) +
+  scale_colour_manual(values = c("black", "#00BFC4", "#F8766D")) +
+  labs(title = "Components 1–3 (FP1)", x = "Time (s)", y = "Amplitude") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# Layout: Scree + Mean on top, Components wide on bottom
+(p1 | p2) / p3
+
+```
+
+
+---
+
+## RQ1: Do EEG Patterns Differ by Group?
+
+* Permutation test showed significant group differences
+* Strongest for **non-matching stimuli** (S2 Non-match)
+
+---
+
+## RQ2: Effect of Stimuli on EEG
+
+```{r, echo=FALSE, fig.align='center'}
+ggplot(fpca_scores_fourier, aes(x = matching.condition, y = FP1.1, fill = matching.condition)) +
+  geom_boxplot() +
+  labs(title = "FP1 Component 1 by Stimulus", x = "Stimulus", y = "FP1 - PC1 Score") +
+  theme_minimal()
+```
+
+---
+
+## RQ3: Clustering on EEG Shape
+
+```{r, echo=FALSE, fig.align='center'}
+ggplot(final_clusters, aes(x = FP1_1, y = FP2_1, colour = cluster)) +
+  geom_point(size = 3) +
+  labs(title = "K-means Clustering (3 groups)", x = "FP1 PC1", y = "FP2 PC1") +
+  theme_minimal()
+```
+
+
+---
+
+## RQ4: Can We Predict Group from EEG?
+
+* Models: Random Forest, Multinomial
+* Inputs: PC1–PC6 from FP1 & FP2
+* Compared **Fourier** vs **B-spline** basis
+
+---
+
+
+```{r, echo=FALSE, fig.align='center'}
+ggplot(results, aes(x = NHarm, y = Matching_RF, colour = Basis)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "RF Accuracy for Matching Condition by Basis Type",
+       x = "Number of Components", y = "Accuracy") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal()
+```
+---
+
+
+```{r, echo=FALSE, fig.align='center'}
+library(tidyr)
+
+results_long <- results %>%
+  pivot_longer(cols = c(Matching_RF, Subject_RF),
+               names_to = "Task", values_to = "Accuracy")
+
+ggplot(results_long, aes(x = NHarm, y = Accuracy, colour = Basis)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~Task, ncol = 1) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Random Forest Accuracy by Basis Type",
+    x = "Number of Components (NHarm)",
+    y = "Accuracy"
+  ) +
+  theme_minimal()
+
+```
+---
+
+## Component Tuning Results
+
+```{r, echo=FALSE, fig.align='center'}
+results <- readRDS("nharm_tuning_results.rds")
+results_long <- results %>%
+  pivot_longer(cols = starts_with("Matching_"), names_to = "Model_Matching", values_to = "Accuracy") %>%
+  mutate(Model = gsub("Matching_", "", Model_Matching), Config = paste(Basis, NHarm, sep = "-")) %>%
+  arrange(desc(Accuracy)) %>%
+  slice_head(n = 5)
+
+ggplot(results_long, aes(x = reorder(Config, -Accuracy), y = Accuracy, fill = Model)) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  labs(title = "Top 5 FPCA Configurations for Stimulus Prediction", x = "Basis-Type + Components", y = "Accuracy", fill = "Model") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+---
+
+## Final Summary
+
+* EEG curves differ by subject group and stimulus
+* FPCA reduced complexity — top 3 components explained >90% variance
+* Random Forest with **Fourier basis** performed best (75% accuracy)
+
+---
+
+## Limitations 
+
+* Small sample size (only 16 subjects)
+
+* Limited to FP1 and FP2 sensors
+
+* Only the first trial per condition included
+
+* Possible subject-level confounding not accounted for
+
+* Clustering and modelling may overfit due to high dimensionality
+---
+
+## Conclusion & Next Steps
+
+**Conclusion**
+- FDA captured group-level EEG differences
+- FPCA scores worked well as predictors
+
+**Next Steps**
+- Extend to all 64 electrodes
+- Explore time-locked responses (e.g., ERP)
+- Try deep learning models (e.g., CNN)
+
+---
+
+## Questions?
