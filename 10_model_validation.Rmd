@@ -1,0 +1,121 @@
+---
+title: "10_model_validation"
+output: html_document
+date: "2025-06-21"
+---
+
+```{r}
+library(fda)
+library(fda.usc)
+library(dplyr)
+library(caret)
+library(nnet)
+library(randomForest)
+library(glmnet)
+library(e1071)
+install.packages("MLmetrics")
+library(MLmetrics)
+
+```
+
+```{r}
+# Load dataset
+firsttrial <- readRDS("firsttrial_data.rds")
+```
+
+```{r}
+run_fpca <- function(data, basis_type, nharm) {
+  if (basis_type == "bspline") {
+    basis <- create.bspline.basis(rangeval = range(time), nbasis = length(time) / 2)
+  } else if (basis_type == "fourier") {
+    basis <- create.fourier.basis(rangeval = range(time), nbasis = length(time) / 2)
+  }
+
+  fdParObj <- fdPar(basis, Lfdobj = 2, lambda = 1e-2)
+
+  # FP1 data
+  fp1_data <- data %>%
+    filter(sensor.position == "FP1") %>%
+    arrange(matching.condition, subject.identifier, name, time)
+  pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), 256)
+  pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
+
+  # FP2 data
+  fp2_data <- data %>%
+    filter(sensor.position == "FP2") %>%
+    arrange(matching.condition, subject.identifier, name, time)
+  pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), 256)
+  pca_fd_fp2 <- smooth.basis(time, pca_matrix_fp2, fdParObj)$fd
+
+  res_fp1 <- pca.fd(pca_fd_fp1, nharm = nharm)
+  res_fp2 <- pca.fd(pca_fd_fp2, nharm = nharm)
+
+  scores_fp1 <- as.data.frame(res_fp1$scores)
+  colnames(scores_fp1) <- paste0("FP1_", 1:ncol(scores_fp1))
+
+  scores_fp2 <- as.data.frame(res_fp2$scores)
+  colnames(scores_fp2) <- paste0("FP2_", 1:ncol(scores_fp2))
+
+  combined_scores <- cbind(fp1_data %>% filter(time == 0) %>% dplyr::select(matching.condition, subject.identifier), scores_fp1, scores_fp2)
+
+  combined_scores$matching.condition <- as.factor(combined_scores$matching.condition)
+  combined_scores$subject.identifier <- as.factor(combined_scores$subject.identifier)
+
+  return(combined_scores)
+}
+
+time <- seq(0, 1, length.out = 256)
+
+```
+
+
+```{r}
+
+# Extract scores for nharm = 7, fourier
+best_scores <- run_fpca(firsttrial, basis_type = "fourier", nharm = 7)
+
+# Train/test split
+set.seed(123)
+train_idx <- createDataPartition(best_scores$matching.condition, p = 0.75, list = FALSE)
+train <- best_scores[train_idx, ]
+test <- best_scores[-train_idx, ]
+
+predictors <- names(best_scores)[grepl("FP[12]_", names(best_scores))]
+
+# Fit Random Forest
+rf_model <- randomForest(as.formula(paste("matching.condition ~", paste(predictors, collapse = "+"))), data = train)
+
+# Predict
+rf_pred <- predict(rf_model, test)
+
+# True labels
+rf_truth <- test$matching.condition
+
+```
+
+```{r}
+# Convert to factors with same levels
+rf_pred <- factor(rf_pred, levels = levels(rf_truth))
+
+f1 <- F1_Score(y_true = rf_truth, y_pred = rf_pred, positive = levels(rf_truth)[2])
+print(paste("F1 Score:", round(f1, 3)))
+
+```
+
+```{r}
+acc <- mean(rf_pred == rf_truth)
+n <- length(rf_truth)
+
+# 95% CI using binomial exact method
+ci <- binom.test(sum(rf_pred == rf_truth), n)$conf.int
+print(paste0("Accuracy: ", round(acc, 3),
+             " (95% CI: ", round(ci[1], 3), " – ", round(ci[2], 3), ")"))
+
+```
+
+```{r}
+binom_test <- binom.test(sum(rf_pred == rf_truth), n, p = 1/3, alternative = "greater")
+print(paste("P-value:", round(binom_test$p.value, 5)))
+
+```
+
