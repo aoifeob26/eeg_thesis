@@ -226,3 +226,347 @@ for (sensor in sensor_list) {
   print(p2)
 }
 ```
+```{r}
+# Pick a subject
+subject_name <- unique(firsttrial$name)[1]  # or change to a specific one
+
+# Filter FP1 data for the selected subject
+subject_data <- firsttrial %>%
+  filter(sensor.position == "FP1", name == subject_name) %>%
+  arrange(time)
+
+# Extract time and raw signal
+time <- subject_data$time
+raw <- subject_data$sensor.value
+
+# Evaluate fits (force to numeric in case of 1-column matrix)
+bspline_fit <- as.numeric(eval.fd(time, res_fp1$meanfd + 2 * res_fp1$harmonics[1]))
+fourier_fit <- as.numeric(eval.fd(time, res.fp1$meanfd + 2 * res.fp1$harmonics[1]))
+
+# Build a tidy dataframe
+plot_df <- data.frame(
+  time = time,
+  raw = raw,
+  bspline = bspline_fit,
+  fourier = fourier_fit
+)
+
+# Plot
+library(ggplot2)
+
+ggplot(plot_df, aes(x = time)) +
+  geom_line(aes(y = raw), color = "gray70", alpha = 0.7, size = 0.5) +
+  geom_line(aes(y = bspline), color = "red", size = 1) +
+  geom_line(aes(y = fourier), color = "blue", size = 1) +
+  labs(
+    title = paste("EEG Curve Smoothing –", subject_name),
+    subtitle = "B-spline (red) vs Fourier (blue) vs Raw (gray)",
+    y = "EEG Value",
+    x = "Time (seconds)"
+  ) +
+  theme_minimal()
+
+```
+
+
+```{r}
+library(caret)
+# Confusion matrix for LASSO
+confusionMatrix(data = factor(pred_lasso), reference = factor(truth))
+
+# Confusion matrix for Random Forest
+confusionMatrix(data = factor(pred_rf), reference = factor(truth))
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+cm_df <- data.frame(
+  Model = rep(c("RF", "LASSO"), each = 4),
+  Reference = rep(c("Alcoholic", "Control"), 4),
+  Prediction = rep(c("Alcoholic", "Control"), times = 4),
+  Count = c(10, 2, 3, 13, 9, 4, 5, 12)  # Replace with your own confusion matrix counts
+)
+
+ggplot(cm_df, aes(x = Reference, y = Prediction, fill = Count)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "darkred") +
+  facet_wrap(~Model) +
+  labs(title = "Confusion Matrices", fill = "Count") +
+  theme_minimal()
+
+```
+
+```{r}
+metrics_df <- data.frame(
+  Model = rep(c("Lasso", "Random Forest"), each = 3),
+  Basis = rep(c("B-spline", "Fourier"), times = 3),
+  Metric = rep(c("Accuracy", "Sensitivity", "Specificity"), 2),
+  Value = c(0.78, 0.75, 0.80, 0.84, 0.81, 0.85)  # Replace with your values
+)
+
+```
+
+
+```{r}
+ggplot(metrics_df, aes(x = Model, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~Basis) +
+  ylim(0, 1) +
+  labs(title = "Model Performance Comparison",
+       y = "Metric Value",
+       x = "Model") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal()
+
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Create group variable: Alcoholic vs Control
+firsttrial <- firsttrial %>%
+  mutate(group = ifelse(grepl("^a", subject.identifier), "Alcoholic", "Control"))
+
+# Keep only FP1 (or change to FP2 if you want that instead)
+eeg_mean_df <- firsttrial %>%
+  filter(sensor.position == "FP1") %>%
+  group_by(group, matching.condition, time) %>%
+  summarise(
+    mean_value = mean(sensor.value, na.rm = TRUE),
+    sd_value = sd(sensor.value, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Plot: Mean curves with confidence band (optional)
+ggplot(eeg_mean_df, aes(x = time, y = mean_value, color = group, fill = group)) +
+  geom_line(size = 1.1) +
+  geom_ribbon(aes(ymin = mean_value - sd_value, ymax = mean_value + sd_value), alpha = 0.15, color = NA) +
+  facet_wrap(~matching.condition) +
+  labs(
+    title = "Mean EEG Curves by Group and Condition (FP1)",
+    x = "Time (seconds)",
+    y = "EEG Voltage (uV)",   # ← updated from µV to uV
+    color = "Group",
+    fill = "Group"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+```{r}
+# Example variables — replace with your actual results
+# null_dist = vector of permuted test stats
+# obs_stat = observed test stat
+
+# For illustration — replace these with your own
+# (e.g., S2_NoMatch_perm_results$res_fp1 or however it's stored)
+null_dist <- rnorm(1000, mean = 0, sd = 1)  # simulated null
+obs_stat <- 2.5                             # your actual observed value
+
+# Plot
+library(ggplot2)
+
+ggplot(data.frame(null = null_dist), aes(x = null)) +
+  geom_histogram(aes(y = ..density..), bins = 50, fill = "gray80", color = "gray50") +
+  geom_density(color = "black", size = 1) +
+  geom_vline(xintercept = obs_stat, color = "red", size = 1.2, linetype = "dashed") +
+  labs(
+    title = "Permutation Test – S2 No-Match (FP1)",
+    subtitle = "Observed test statistic vs null distribution",
+    x = "Test Statistic (Area Between Group Curves)",
+    y = "Density"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+```{r}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# Select and reshape PC1–PC3 scores along with matching condition
+score_data <- fpca_scores_fourier %>%
+  select(name, matching.condition, starts_with("FP1."), starts_with("FP2.")) %>%
+  pivot_longer(cols = c(FP1.1, FP1.2, FP1.3), names_to = "PC", values_to = "Score")
+
+# Optional: clean up PC labels
+score_data$PC <- factor(score_data$PC, labels = c("PC1", "PC2", "PC3"))
+
+# Plot for FP1 scores across stimuli
+ggplot(score_data, aes(x = matching.condition, y = Score, fill = PC)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 0.8) +
+  facet_wrap(~PC, scales = "free_y") +
+  labs(
+    title = "FP1 – FPCA Scores by Stimulus Condition",
+    x = "Stimulus Type",
+    y = "FPCA Score",
+    fill = "Component"
+  ) +
+  theme_minimal(base_size = 14) +
+  scale_fill_brewer(palette = "Set2")
+
+```
+
+```{r}
+library(fda)
+library(dplyr)
+library(ggplot2)
+
+# Filter to FP1
+fp1_data <- firsttrial %>%
+  filter(sensor.position == "FP1", !is.na(matching.condition)) %>%
+  mutate(stimulus = case_when(
+    grepl("S1", matching.condition, ignore.case = TRUE) ~ "S1 Object",
+    grepl("S2 match", matching.condition, ignore.case = TRUE) ~ "S2 Match",
+    grepl("S2 nomatch", matching.condition, ignore.case = TRUE) ~ "S2 No-Match",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(stimulus))
+
+# Average per time point and stimulus
+avg_data <- fp1_data %>%
+  group_by(stimulus, time) %>%
+  summarise(mean_val = mean(sensor.value, na.rm = TRUE), .groups = "drop")
+
+# Smooth using Fourier basis
+basis <- create.fourier.basis(c(0, 1), nbasis = 15)
+
+smoothed_df_list <- avg_data %>%
+  group_split(stimulus) %>%
+  lapply(function(df) {
+    smooth_fd <- smooth.basis(df$time, df$mean_val, basis)$fd
+    smoothed_vals <- eval.fd(seq(0, 1, length.out = 256), smooth_fd)
+    data.frame(
+      time = seq(0, 1, length.out = 256),
+      value = smoothed_vals,
+      stimulus = unique(df$stimulus)
+    )
+  })
+
+plot_data <- bind_rows(smoothed_df_list)
+
+# Plot
+ggplot(plot_data, aes(x = time, y = value, color = stimulus, linetype = stimulus)) +
+  geom_line(size = 1.3) +
+  scale_color_manual(values = c("blue", "purple", "red")) +
+  scale_linetype_manual(values = c("solid", "dashed", "solid")) +
+  labs(
+    title = "Smoothed Mean EEG Curves by Stimulus (FP1)",
+    x = "Time (seconds)",
+    y = "EEG Voltage (μV)",
+    color = "Stimulus Type",
+    linetype = "Stimulus Type"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Assuming `fpca_scores_bspline` contains PC1, PC2, and stimulus info
+df <- fpca_scores_bspline %>%
+  select(name, PC1 = FP1.1, PC2 = FP1.2, Stimulus = matching.condition) %>%
+  pivot_longer(cols = c(PC1, PC2), names_to = "Component", values_to = "Score")
+
+ggplot(df, aes(x = Stimulus, y = Score, fill = Component)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7, width = 0.6) +
+  facet_wrap(~Component, scales = "free_y") +
+  labs(title = "FP1 – FPCA Scores by Stimulus Condition",
+       x = "Stimulus Type", y = "FPCA Score") +
+  theme_minimal(base_size = 14) +
+  scale_fill_brewer(palette = "Set2")
+
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Create Group label from subject.identifier
+final_clusters <- final_clusters %>%
+  mutate(Group = ifelse(grepl("a", subject.identifier), "Alcoholic", "Control"))
+
+# Optionally shorten stimulus labels
+final_clusters <- final_clusters %>%
+  mutate(Stimulus = case_when(
+    matching.condition == "S1 obj" ~ "S1",
+    matching.condition == "S2 match" ~ "S2 Match",
+    matching.condition == "S2 nomatch" ~ "S2 No-Match",
+    TRUE ~ matching.condition
+  ))
+# Bar plot: % Alcoholic vs Control per cluster
+ggplot(final_clusters, aes(x = as.factor(cluster), fill = Group)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Cluster Composition by Group",
+    x = "Cluster",
+    y = "Proportion",
+    fill = "Group"
+  ) +
+  theme_minimal(base_size = 14)
+
+
+```
+```{r}
+# Bar plot: Stimulus breakdown per cluster
+ggplot(final_clusters, aes(x = as.factor(cluster), fill = Stimulus)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Cluster Composition by Stimulus Type",
+    x = "Cluster",
+    y = "Proportion",
+    fill = "Stimulus"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+new *** 
+
+```{r}
+# Plot eigenfunctions for FP1 and FP2 using Fourier-based FPCA
+plot.pca.fd(res.fp1, nx = 256, harm = 1:3, expand = 0.05)
+plot.pca.fd(res.fp2, nx = 256, harm = 1:3, expand = 0.05)
+
+```
+
+```{r}
+# Make sure PC1 and PC2 are in the data
+library(ggplot2)
+ggplot(final_clusters, aes(x = FP1.1, y = FP1.2, colour = factor(cluster))) +
+  geom_point(alpha = 0.8, size = 2) +
+  labs(
+    title = "FPCA Feature Space: PC1 vs PC2 (FP1 Scores)",
+    x = "Principal Component 1 (FP1.1)",
+    y = "Principal Component 2 (FP1.2)",
+    colour = "Cluster"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+
+```{r}
+ggplot(final_clusters, aes(x = FP1.1, y = FP1.2, colour = factor(cluster), shape = Group)) +
+  geom_point(alpha = 0.8, size = 2) +
+  facet_wrap(~ Stimulus) +
+  labs(
+    title = "PC1 vs PC2 Scatter: Clusters by Group and Stimulus",
+    x = "Principal Component 1 (FP1.1)",
+    y = "Principal Component 2 (FP1.2)",
+    colour = "Cluster",
+    shape = "Group"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
