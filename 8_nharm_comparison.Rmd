@@ -1,0 +1,141 @@
+---
+title: "8_nharm_comparison"
+output: html_document
+date: "2025-03-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(fda)
+library(fda.usc)
+library(dplyr)
+library(caret)
+library(nnet)
+library(randomForest)
+library(glmnet)
+```
+
+```{r}
+# Load dataset
+firsttrial <- readRDS("firsttrial_data.rds")
+```
+
+```{r}
+time <- seq(0, 1, length.out = 256)
+```
+
+```{r}
+run_fpca <- function(data, basis_type, nharm) {
+  if (basis_type == "bspline") {
+    basis <- create.bspline.basis(rangeval = range(time), nbasis = length(time) / 2)
+  } else if (basis_type == "fourier") {
+    basis <- create.fourier.basis(rangeval = range(time), nbasis = length(time) / 2)
+  }
+
+  fdParObj <- fdPar(basis, Lfdobj = 2, lambda = 1e-2)
+
+  # FP1 data
+  fp1_data <- data %>%
+    filter(sensor.position == "FP1") %>%
+    arrange(matching.condition, subject.identifier, name, time)
+  pca_matrix_fp1 <- matrix(as.numeric(fp1_data$sensor.value), 256)
+  pca_fd_fp1 <- smooth.basis(time, pca_matrix_fp1, fdParObj)$fd
+
+  # FP2 data
+  fp2_data <- data %>%
+    filter(sensor.position == "FP2") %>%
+    arrange(matching.condition, subject.identifier, name, time)
+  pca_matrix_fp2 <- matrix(as.numeric(fp2_data$sensor.value), 256)
+  pca_fd_fp2 <- smooth.basis(time, pca_matrix_fp2, fdParObj)$fd
+
+  res_fp1 <- pca.fd(pca_fd_fp1, nharm = nharm)
+  res_fp2 <- pca.fd(pca_fd_fp2, nharm = nharm)
+
+  scores_fp1 <- as.data.frame(res_fp1$scores)
+  colnames(scores_fp1) <- paste0("FP1_", 1:ncol(scores_fp1))
+
+  scores_fp2 <- as.data.frame(res_fp2$scores)
+  colnames(scores_fp2) <- paste0("FP2_", 1:ncol(scores_fp2))
+
+  combined_scores <- cbind(fp1_data %>% filter(time == 0) %>% dplyr::select(matching.condition, subject.identifier), scores_fp1, scores_fp2)
+
+  combined_scores$matching.condition <- as.factor(combined_scores$matching.condition)
+  combined_scores$subject.identifier <- as.factor(combined_scores$subject.identifier)
+
+  return(combined_scores)
+}
+```
+
+```{r}
+fit_and_evaluate <- function(scores_data, target_var) {
+  set.seed(123)
+  train_idx <- createDataPartition(scores_data[[target_var]], p = 0.75, list = FALSE)
+  train <- scores_data[train_idx, ]
+  test <- scores_data[-train_idx, ]
+
+  predictors <- names(scores_data)[grepl("FP[12]_", names(scores_data))]
+
+  # Multinomial model
+  multinom_model <- multinom(as.formula(paste(target_var, "~", paste(predictors, collapse = "+"))), data = train, trace = FALSE)
+  multinom_acc <- mean(predict(multinom_model, test) == test[[target_var]])
+
+  # Random Forest model
+  rf_model <- randomForest(as.formula(paste(target_var, "~", paste(predictors, collapse = "+"))), data = train)
+  rf_acc <- mean(predict(rf_model, test) == test[[target_var]])
+
+  # LASSO model
+  X_train <- as.matrix(train[, predictors])
+  X_test <- as.matrix(test[, predictors])
+
+  X_train <- scale(X_train)
+  X_test <- scale(X_test)
+
+  y_train <- as.numeric(as.factor(train[[target_var]])) - 1
+  y_test <- test[[target_var]]
+
+  lasso_model <- cv.glmnet(X_train, y_train, alpha = 1, family = "multinomial")
+
+  lasso_pred <- predict(lasso_model, X_test, s = "lambda.min", type = "class")
+
+  levels_y <- levels(as.factor(scores_data[[target_var]]))
+  lasso_pred <- factor(as.numeric(lasso_pred), levels = 0:(length(levels_y) - 1), labels = levels_y)
+
+  lasso_acc <- mean(lasso_pred == y_test)
+
+  return(c(Multinomial = multinom_acc, RandomForest = rf_acc, LASSO = lasso_acc))
+}
+```
+
+```{r}
+nharm_values <- 2:20
+results <- data.frame()
+
+for (basis in c("bspline", "fourier")) {
+  for (nharm in nharm_values) {
+    scores <- run_fpca(firsttrial, basis, nharm)
+
+    acc_match <- fit_and_evaluate(scores, "matching.condition")
+    acc_subj <- fit_and_evaluate(scores, "subject.identifier")
+
+    results <- rbind(results, data.frame(
+      Basis = basis,
+      NHarm = nharm,
+      Matching_Multinom = as.numeric(acc_match["Multinomial"]),
+      Matching_RF = as.numeric(acc_match["RandomForest"]),
+      Matching_LASSO = as.numeric(acc_match["LASSO"]),
+      Subject_Multinom = as.numeric(acc_subj["Multinomial"]),
+      Subject_RF = as.numeric(acc_subj["RandomForest"]),
+      Subject_LASSO = as.numeric(acc_subj["LASSO"])
+    ))
+
+    print(paste("Completed", basis, "with", nharm, "harmonics"))
+  }
+}
+
+saveRDS(results, "nharm_tuning_results.rds")
+
+print(results)
+```
