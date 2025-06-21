@@ -699,3 +699,68 @@ ggplot(final_clusters, aes(x = FP1.1, y = FP1.2, colour = factor(cluster), shape
   theme_minimal(base_size = 14)
 
 ```
+
+```{r}
+library(tidyr)
+library(dplyr)
+
+results_long <- results %>%
+  pivot_longer(
+    cols = starts_with("Matching") | starts_with("Subject"),
+    names_to = c("Task", "Model"),
+    names_sep = "_",
+    values_to = "Accuracy"
+  )
+```
+
+```{r}
+library(plotly)
+
+# Interactive line plot comparing model performance
+plot_ly(results_long, 
+        x = ~NHarm, 
+        y = ~Accuracy, 
+        color = ~Model, 
+        linetype = ~Task,
+        type = 'scatter', 
+        mode = 'lines+markers',
+        split = ~interaction(Task, Model),
+        hoverinfo = 'text',
+        text = ~paste("Basis:", Basis,
+                      "<br>Task:", Task,
+                      "<br>Model:", Model,
+                      "<br>NHarm:", NHarm,
+                      "<br>Accuracy:", round(Accuracy, 3))) %>%
+  layout(title = "Model Accuracy by Number of Harmonics",
+         xaxis = list(title = "Number of Harmonics"),
+         yaxis = list(title = "Accuracy"),
+         legend = list(title = list(text = "Model Type")),
+         hovermode = "closest")
+
+```
+```{r}
+plot_ly(results_long, 
+        x = ~NHarm, 
+        y = ~Accuracy, 
+        color = ~Model, 
+        linetype = ~Task,
+        split = ~interaction(Task, Model),
+        type = 'scatter',
+        mode = 'lines+markers',
+        hoverinfo = 'text',
+        text = ~paste("Basis:", Basis,
+                      "<br>Task:", Task,
+                      "<br>Model:", Model,
+                      "<br>NHarm:", NHarm,
+                      "<br>Accuracy:", round(Accuracy, 3))) %>%
+  layout(title = "Model Accuracy by NHarm (Faceted by Basis)",
+         xaxis = list(title = "Number of Harmonics"),
+         yaxis = list(title = "Accuracy"),
+         legend = list(title = list(text = "Model Type")),
+         hovermode = "closest") %>%
+  subplot(nrows = 1, shareX = TRUE, shareY = TRUE) %>%
+  add_trace(data = subset(results_long, Basis == "bspline"), name = "B-spline") %>%
+  add_trace(data = subset(results_long, Basis == "fourier"), name = "Fourier")
+
+```
+
