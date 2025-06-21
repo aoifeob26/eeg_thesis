@@ -121,8 +121,6 @@ print(accuracy)
 
 ```
 
-accuracy really low above
-
 Combined FP1 & FP2 Model and Alternative GLMNET Approach
 
 ```{r}
