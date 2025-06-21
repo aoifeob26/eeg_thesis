@@ -3,7 +3,8 @@ title: "FPCA & Clustering Visualisations"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
+```{r include=FALSE}
+
 library(fda)
 library(dplyr)
 library(tidyr)
@@ -11,11 +12,15 @@ library(ggplot2)
 library(scales)
 library(patchwork)
 library(gridExtra)
+
+
+getwd()
+install.packages("../fdapace_0.6.0.zip", repos = NULL, type = "win.binary")
 library(fdapace)
+
 ```
 
-### Load Data
-```{r}
+```{r include=FALSE}
 firsttrial <- readRDS("firsttrial_data.rds")         
 fpca_scores_bspline <- readRDS("fpca_scores_bspline.rds")  
 fpca_scores_fourier <- readRDS("fpca_scores_fourier.rds")  
